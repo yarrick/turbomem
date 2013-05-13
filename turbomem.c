@@ -11,7 +11,7 @@ static struct pci_device_id ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, ids);
 
-static unsigned char turbomem_get_revision(struct pci_dev *dev)
+static u8 turbomem_get_revision(struct pci_dev *dev)
 {
 	u8 revision;
 
@@ -24,12 +24,15 @@ static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 	/* Do probing type stuff here.  
 	 * Like calling request_region();
 	 */
-	pci_enable_device(dev);
+	int ret = -ENODEV;
+	u8 revision;
+	ret = pci_enable_device(dev);
+	if (ret)
+		return ret;
 	
-	if (turbomem_get_revision(dev) == 0x42)
-		return -ENODEV;
+	revision = turbomem_get_revision(dev);
 
-	printk(KERN_INFO "Found Intel Turbo Memory Controller\n");
+	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", revision);
 	return 0;
 }
 
