@@ -5,6 +5,8 @@
 
 #define PCI_DEVICE_ID_INTEL_TURBOMEMORY (0x444e)
 
+#define DRIVER_NAME "turbomem"
+
 static struct pci_device_id ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
 	{ 0, }
@@ -21,15 +23,18 @@ static u8 turbomem_get_revision(struct pci_dev *dev)
 
 static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	/* Do probing type stuff here.  
-	 * Like calling request_region();
-	 */
 	int ret = -ENODEV;
 	u8 revision;
 	ret = pci_enable_device(dev);
 	if (ret)
 		return ret;
 	
+	ret = pci_request_regions(dev, DRIVER_NAME);
+	if (ret) {
+		dev_err(&dev->dev, "Unable to request memory region\n");
+		return ret;
+	}
+
 	revision = turbomem_get_revision(dev);
 
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", revision);
@@ -38,13 +43,11 @@ static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 static void remove(struct pci_dev *dev)
 {
-	/* clean up any allocated resources and stuff here.
-	 * like call release_region();
-	 */
+	pci_release_regions(dev);
 }
 
 static struct pci_driver pci_driver = {
-	.name = "turbomem",
+	.name = DRIVER_NAME,
 	.id_table = ids,
 	.probe = probe,
 	.remove = remove,
