@@ -23,12 +23,21 @@ static u8 turbomem_get_revision(struct pci_dev *dev)
 
 static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
-	int ret = -ENODEV;
+	int ret;
 	u8 revision;
+
 	ret = pci_enable_device(dev);
 	if (ret)
 		return ret;
-	
+
+	pci_set_master(dev);
+
+	if (pci_set_dma_mask(dev, DMA_BIT_MASK(64)) &&
+	    pci_set_dma_mask(dev, DMA_BIT_MASK(32))) {
+		dev_warn(&dev->dev, "No suitable DMA found\n");
+		return -ENOMEM;
+	}
+
 	ret = pci_request_regions(dev, DRIVER_NAME);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to request memory region\n");
@@ -36,8 +45,8 @@ static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	revision = turbomem_get_revision(dev);
-
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", revision);
+
 	return 0;
 }
 
