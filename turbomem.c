@@ -41,18 +41,23 @@ static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 	ret = pci_request_regions(dev, DRIVER_NAME);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to request memory region\n");
-		return ret;
+		goto fail_req_region;
 	}
 
 	revision = turbomem_get_revision(dev);
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", revision);
 
 	return 0;
+
+fail_req_region:
+	pci_disable_device(dev);
+	return ret;
 }
 
 static void remove(struct pci_dev *dev)
 {
 	pci_release_regions(dev);
+	pci_disable_device(dev);
 }
 
 static struct pci_driver pci_driver = {
