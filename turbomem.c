@@ -14,14 +14,6 @@ static struct pci_device_id turbomem_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, turbomem_ids);
 
-static u8 turbomem_get_revision(struct pci_dev *dev)
-{
-	u8 revision;
-
-	pci_read_config_byte(dev, PCI_REVISION_ID, &revision);
-	return revision;
-}
-
 static int do_reset(unsigned io_base)
 {
 	unsigned regs[25];
@@ -78,7 +70,6 @@ static int do_reset(unsigned io_base)
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
-	u8 revision;
 
 	ret = pci_enable_device(dev);
 	if (ret)
@@ -104,8 +95,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_reset;
 	}
 
-	revision = turbomem_get_revision(dev);
-	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", revision);
+	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", dev->revision);
 
 	return 0;
 
