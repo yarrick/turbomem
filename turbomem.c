@@ -67,6 +67,16 @@ static int do_reset(unsigned io_base)
 	return 0;
 }
 
+static unsigned get_device_characteristics(struct pci_dev *dev)
+{
+	unsigned reg;
+	unsigned io_base = pci_resource_start(dev, 2);
+
+	reg = inl(io_base + 0x38);
+
+	return (((reg& 0xFFFF0000) + 0x10000) & 0xF0000) | (reg & 0xFFFF);
+}
+
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
@@ -96,6 +106,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", dev->revision);
+
+	dev_info(&dev->dev, "Device characteristics: %05X\n", get_device_characteristics(dev));
 
 	return 0;
 
