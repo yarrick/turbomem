@@ -50,8 +50,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 		if (i) msleep(100);
 		printk(KERN_INFO "IO write %2d: %08X\n", 8, regs[8]);
 		iowrite32(regs[8], turbomem->mem + 8);
-		regs[24] = reg = ioread32(turbomem->mem + 16);
-		printk(KERN_INFO "IO read  %2d: %08X\n", 16, reg);
+		regs[24] = reg = ioread32(turbomem->mem + 24);
+		printk(KERN_INFO "IO read  %2d: %08X\n", 24, reg);
 		if ((reg & 0x00010000) == 0) break;
 		i++;
 	} while ( i < 20);
@@ -63,8 +63,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	i = 0;
 	do {
 		if (i) msleep(100);
-		regs[24] = reg = ioread32(turbomem->mem + 16);
-		printk(KERN_INFO "IO read  %2d: %08X\n", 16, reg);
+		regs[24] = reg = ioread32(turbomem->mem + 24);
+		printk(KERN_INFO "IO read  %2d: %08X\n", 24, reg);
 		if ((reg & 0x00010000) == 0) break;
 		i++;
 	} while ( i < 20);
