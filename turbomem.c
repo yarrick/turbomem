@@ -20,55 +20,51 @@ struct turbomem_info {
 	unsigned characteristics;
 };
 
+#define HW_RESET_ATTEMPTS 50
+
 static int turbomem_hw_init(struct turbomem_info *turbomem)
 {
-	unsigned regs[25];
+	unsigned regs[4];
 	unsigned reg, i;
-	printk(KERN_INFO "Start reset, mem base %p\n", turbomem->mem);
-	for (i = 0; i <= 24; i+= 8) {
-		reg = ioread32(turbomem->mem + i);
-		printk(KERN_INFO "IO read  %2d: %08X\n", i, reg);
+	for (i = 0; i < 4; i++) {
+		regs[i] = ioread32(turbomem->mem + i*8);
 	}
-	for (i = 0; i <= 24; i+= 8) {
-		reg = 0;
-		if (i == 24) reg = 0x1F;
-		iowrite32(reg, turbomem->mem + i);
-		printk(KERN_INFO "IO write %2d: %08X\n", i, reg);
+	reg = regs[0] | regs[1] | regs[2] | regs[3];
+	if (reg) {
+		for (i = 0; i < 4; i++) {
+			reg = 0;
+			if (i == 3) reg = 0x1F;
+			iowrite32(reg, turbomem->mem + i*8);
+		}
+		for (i = 0; i < 4; i++) {
+			regs[i] = ioread32(turbomem->mem + i*8);
+		}
+		reg = regs[0] | regs[1] | regs[2] | regs[3];
+		if (reg) {
+			reg = 0x100;
+			i = 16;
+			iowrite32(reg, turbomem->mem + i);
+			regs[1] |= 1;
+			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
+				if (i) msleep(100);
+				iowrite32(regs[1], turbomem->mem + 8);
+				regs[3] = reg = ioread32(turbomem->mem + 24);
+				if ((reg & 0x00010000) == 0) break;
+			}
+			if (i >= HW_RESET_ATTEMPTS)
+				return -EIO;
+		}
 	}
-	for (i = 0; i <= 24; i+= 8) {
-		reg = ioread32(turbomem->mem + i);
-		regs[i] = reg;
-		printk(KERN_INFO "IO read  %2d: %08X\n", i, reg);
-	}
-	reg = 0x100;
-	i = 16;
-	iowrite32(reg, turbomem->mem + i);
-	printk(KERN_INFO "IO write %2d: %08X\n", i, reg);
-	regs[8] |= 1;
-	i = 0;
-	do {
-		if (i) msleep(100);
-		printk(KERN_INFO "IO write %2d: %08X\n", 8, regs[8]);
-		iowrite32(regs[8], turbomem->mem + 8);
-		regs[24] = reg = ioread32(turbomem->mem + 24);
-		printk(KERN_INFO "IO read  %2d: %08X\n", 24, reg);
-		if ((reg & 0x00010000) == 0) break;
-		i++;
-	} while ( i < 20);
-	if (i >= 20) return -EIO;
 
-	regs[8] = (regs[8] & 0xFFFFFFFB) | 1;
-	printk(KERN_INFO "IO write %2d: %08X\n", 8, regs[8]);
-	iowrite32(regs[8], turbomem->mem + 8);
-	i = 0;
-	do {
+	regs[1] = (regs[1] & 0xFFFFFFFB) | 1;
+	iowrite32(regs[1], turbomem->mem + 8);
+	for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 		if (i) msleep(100);
-		regs[24] = reg = ioread32(turbomem->mem + 24);
-		printk(KERN_INFO "IO read  %2d: %08X\n", 24, reg);
+		regs[3] = reg = ioread32(turbomem->mem + 24);
 		if ((reg & 0x00010000) == 0) break;
-		i++;
-	} while ( i < 20);
-	if (i >= 20) return -EIO;
+	}
+	if (i >= HW_RESET_ATTEMPTS)
+		return -EIO;
 
 	// Get device characteristics
 	reg = ioread32(turbomem->mem + 0x38);
@@ -121,8 +117,10 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_init;
 	}
 
-	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n", dev->revision);
-	dev_info(&dev->dev, "Device characteristics: %05X\n", turbomem->characteristics);
+	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n",
+		dev->revision);
+	dev_info(&dev->dev, "Device characteristics: %05X\n",
+		turbomem->characteristics);
 
 	pci_set_drvdata(dev, turbomem);
 
