@@ -3,10 +3,15 @@
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/delay.h>
+#include <linux/interrupt.h>
 
 #define PCI_DEVICE_ID_INTEL_TURBOMEMORY (0x444e)
 
 #define DRIVER_NAME "turbomem"
+
+#define STATUS_REGISTER (0x18)
+#define STATUS_INTERRUPT_MASK (0x1F)
+#define STATUS_DMA_ERROR (0x100)
 
 static struct pci_device_id turbomem_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
@@ -19,6 +24,27 @@ struct turbomem_info {
 	void __iomem *mem;
 	unsigned characteristics;
 };
+
+static irqreturn_t turbomem_isr(int irq, void *dev)
+{
+	struct turbomem_info *turbomem = dev;
+	unsigned status;
+	unsigned reg;
+
+	status = ioread32(turbomem->mem + STATUS_REGISTER);
+	if (status == 0xFFFFFFFF || (status & STATUS_INTERRUPT_MASK) == 0)
+		return IRQ_NONE;
+
+	dev_info(turbomem->dev, "Got IRQ on line %d, status is %08X\n", irq, status);
+
+	reg = ioread32(turbomem->mem + 0x20);
+	iowrite32(reg & 0xFFFFFFFC, turbomem->mem + 0x20);
+
+	reg = ioread32(turbomem->mem + STATUS_REGISTER);
+	iowrite32(reg & STATUS_INTERRUPT_MASK, turbomem->mem + STATUS_REGISTER);
+
+	return IRQ_HANDLED;
+}
 
 #define HW_RESET_ATTEMPTS 50
 
@@ -117,6 +143,13 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_init;
 	}
 
+	ret = request_irq(dev->irq, turbomem_isr, IRQF_SHARED,
+			DRIVER_NAME, turbomem);
+	if (ret) {
+		dev_err(&dev->dev, "Unable to request IRQ\n");
+		goto fail_init;
+	}
+
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n",
 		dev->revision);
 	dev_info(&dev->dev, "Device characteristics: %05X\n",
@@ -126,6 +159,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	return 0;
 
+//fail_irq:
+	//free_irq(turbomem->irq, turbomem);
 fail_init:
 	iounmap(turbomem->mem);
 fail_ioremap:
@@ -141,6 +176,7 @@ static void turbomem_remove(struct pci_dev *dev)
 {
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
+	free_irq(dev->irq, turbomem);
 	iounmap(turbomem->mem);
 	pci_release_regions(dev);
 	pci_disable_device(dev);
