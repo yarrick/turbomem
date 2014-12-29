@@ -63,7 +63,8 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	if (status == 0xFFFFFFFF || (status & STATUS_INTERRUPT_MASK) == 0)
 		return IRQ_NONE;
 
-	dev_info(turbomem->dev, "Got IRQ on line %d, status is %08X\n", irq, status);
+	dev_info(turbomem->dev, "Got IRQ on line %d, status is %08X\n",
+		irq, status);
 
 	reg = ioread32(turbomem->mem + 0x20);
 	iowrite32(reg & 0xFFFFFFFC, turbomem->mem + 0x20);
