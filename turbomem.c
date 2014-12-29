@@ -23,7 +23,35 @@ struct turbomem_info {
 	struct device *dev;
 	void __iomem *mem;
 	unsigned characteristics;
+	unsigned flash_sectors;
 };
+
+static unsigned turbomem_calc_sectors(unsigned reg0x38, unsigned chars)
+{
+	int limit8, limit14;
+	int d = (reg0x38 >> 0xC) & 0xF;
+	int c = 1;
+	int i = 0;
+
+	do {
+		c = c * 2;
+		i++;
+	} while (i < d);
+	limit8 = i << 10;
+
+	d = (reg0x38 >> 16) & 0xF;
+	limit14 = d + 1;
+
+	d = 0x400 << ((chars >> 0xC) & 0xF);
+	if (d > limit8)
+		limit8 = d;
+
+	d = ((chars >> 0x16) & 0xF);
+	if (d > limit14)
+		limit14 = d;
+
+	return (limit8 * limit14) * 64;
+}
 
 static irqreturn_t turbomem_isr(int irq, void *dev)
 {
@@ -92,10 +120,12 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	if (i >= HW_RESET_ATTEMPTS)
 		return -EIO;
 
-	// Get device characteristics
+	/* Get device characteristics */
 	reg = ioread32(turbomem->mem + 0x38);
 	turbomem->characteristics =
 		(((reg& 0xFFFF0000) + 0x10000) & 0xF0000) | (reg & 0xFFFF);
+
+	turbomem->flash_sectors = turbomem_calc_sectors(reg, turbomem->characteristics);
 
 	return 0;
 }
@@ -104,6 +134,9 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
 	struct turbomem_info *turbomem;
+
+	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n",
+		dev->revision);
 
 	turbomem = kzalloc(sizeof(*turbomem), GFP_KERNEL);
 	if (!turbomem)
@@ -150,10 +183,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_init;
 	}
 
-	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n",
-		dev->revision);
-	dev_info(&dev->dev, "Device characteristics: %05X\n",
-		turbomem->characteristics);
+	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
+		turbomem->characteristics, turbomem->flash_sectors >> 8);
 
 	pci_set_drvdata(dev, turbomem);
 
