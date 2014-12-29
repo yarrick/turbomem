@@ -13,7 +13,7 @@
 #define STATUS_INTERRUPT_MASK (0x1F)
 #define STATUS_DMA_ERROR (0x100)
 
-static struct pci_device_id turbomem_ids[] = {
+static const struct pci_device_id turbomem_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
 	{ 0, }
 };
