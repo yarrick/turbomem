@@ -19,9 +19,16 @@ static const struct pci_device_id turbomem_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, turbomem_ids);
 
+struct dma_buf {
+	void *buf;
+	dma_addr_t busaddr;
+};
+
 struct turbomem_info {
 	struct device *dev;
 	void __iomem *mem;
+	struct dma_pool *dmapool;
+	struct dma_buf idle_transfer;
 	unsigned characteristics;
 	unsigned flash_sectors;
 };
@@ -73,6 +80,39 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	iowrite32(reg & STATUS_INTERRUPT_MASK, turbomem->mem + STATUS_REGISTER);
 
 	return IRQ_HANDLED;
+}
+
+static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
+{
+	dma_addr_t busaddr;
+	void *buf;
+	u8 *u8buf;
+	u32 *u32buf;
+	u32 reg;
+
+	buf = dma_pool_alloc(turbomem->dmapool, GFP_KERNEL, &busaddr);
+	if (!buf) {
+		dev_err(turbomem->dev, "Failed to alloc dma buf");
+		return;
+	}
+
+	memset(buf, 0, 128);
+	u8buf = (u8 *) buf;
+	u32buf = (u32 *) buf;
+
+	u32buf[1] = 0x7FFFFFFE;
+	u8buf[0x10] = 0x35;
+	u8buf[0x7c] = 0;
+	u8buf[0x35] = 1;
+
+	iowrite32(busaddr, turbomem->mem);
+
+	reg = ioread32(turbomem->mem + 0x20);
+	reg |= 3;
+	iowrite32(reg, turbomem->mem + 0x20);
+
+	turbomem->idle_transfer.buf = buf;
+	turbomem->idle_transfer.busaddr = busaddr;
 }
 
 #define HW_RESET_ATTEMPTS 50
@@ -184,6 +224,21 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_init;
 	}
 
+	turbomem->dmapool = dma_pool_create(DRIVER_NAME "_128", &dev->dev,
+		128, 8, 0);
+	if (!turbomem->dmapool) {
+		dev_err(&dev->dev, "Unable to create DMA pool\n");
+		ret = -ENOMEM;
+		goto fail_irq;
+	}
+
+	turbomem_set_idle_transfer(turbomem);
+	if (!turbomem->idle_transfer.buf) {
+		dev_err(&dev->dev, "Unable to allocate idle transfer command\n");
+		ret = -ENOMEM;
+		goto fail_dmapool;
+	}
+
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 8);
 
@@ -191,8 +246,10 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	return 0;
 
-//fail_irq:
-	//free_irq(turbomem->irq, turbomem);
+fail_dmapool:
+	dma_pool_destroy(turbomem->dmapool);
+fail_irq:
+	free_irq(dev->irq, turbomem);
 fail_init:
 	iounmap(turbomem->mem);
 fail_ioremap:
@@ -208,6 +265,8 @@ static void turbomem_remove(struct pci_dev *dev)
 {
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
+	dma_pool_free(turbomem->dmapool, turbomem->idle_transfer.buf, turbomem->idle_transfer.busaddr);
+	dma_pool_destroy(turbomem->dmapool);
 	free_irq(dev->irq, turbomem);
 	iounmap(turbomem->mem);
 	pci_release_regions(dev);
