@@ -13,6 +13,10 @@
 #define STATUS_INTERRUPT_MASK (0x1F)
 #define STATUS_DMA_ERROR (0x100)
 
+#define INTERRUPT_CTRL_REGISTER (0x20)
+#define INTERRUPT_CTRL_DISABLE_MASK (0xFFFFFFFC)
+#define INTERRUPT_CTRL_ENABLE (0x3)
+
 static const struct pci_device_id turbomem_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
 	{ 0, }
@@ -32,6 +36,19 @@ struct turbomem_info {
 	unsigned characteristics;
 	unsigned flash_sectors;
 };
+
+static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool active)
+{
+	u32 reg;
+
+	reg = ioread32(turbomem->mem + INTERRUPT_CTRL_REGISTER);
+	if (active)
+		reg |= INTERRUPT_CTRL_ENABLE;
+	else
+		reg &= INTERRUPT_CTRL_DISABLE_MASK;
+
+	iowrite32(reg, turbomem->mem + INTERRUPT_CTRL_REGISTER);
+}
 
 static unsigned turbomem_calc_sectors(unsigned reg0x38, unsigned chars)
 {
@@ -73,8 +90,7 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	dev_info(turbomem->dev, "Got IRQ on line %d, status is %08X\n",
 		irq, status);
 
-	reg = ioread32(turbomem->mem + 0x20);
-	iowrite32(reg & 0xFFFFFFFC, turbomem->mem + 0x20);
+	turbomem_enable_interrupts(turbomem, 0);
 
 	reg = ioread32(turbomem->mem + STATUS_REGISTER);
 	iowrite32(reg & STATUS_INTERRUPT_MASK, turbomem->mem + STATUS_REGISTER);
@@ -88,7 +104,6 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 	void *buf;
 	u8 *u8buf;
 	u32 *u32buf;
-	u32 reg;
 
 	buf = dma_pool_alloc(turbomem->dmapool, GFP_KERNEL, &busaddr);
 	if (!buf) {
@@ -107,9 +122,7 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 
 	iowrite32(busaddr, turbomem->mem);
 
-	reg = ioread32(turbomem->mem + 0x20);
-	reg |= 3;
-	iowrite32(reg, turbomem->mem + 0x20);
+	turbomem_enable_interrupts(turbomem, 1);
 
 	turbomem->idle_transfer.buf = buf;
 	turbomem->idle_transfer.busaddr = busaddr;
