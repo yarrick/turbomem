@@ -58,12 +58,12 @@ static void turbomem_tasklet(unsigned long privdata)
 }
 
 
-static unsigned turbomem_calc_sectors(unsigned reg0x38, unsigned chars)
+static unsigned turbomem_calc_sectors(u32 reg0x38, unsigned chars)
 {
-	int limit8, limit14;
-	int d = (reg0x38 >> 0xC) & 0xF;
-	int c = 1;
-	int i = 0;
+	unsigned limit8, limit14;
+	unsigned d = (reg0x38 >> 0xC) & 0xF;
+	unsigned c = 1;
+	unsigned i = 0;
 
 	do {
 		c = c * 2;
@@ -88,8 +88,8 @@ static unsigned turbomem_calc_sectors(unsigned reg0x38, unsigned chars)
 static irqreturn_t turbomem_isr(int irq, void *dev)
 {
 	struct turbomem_info *turbomem = dev;
-	unsigned status;
-	unsigned reg;
+	u32 status;
+	u32 reg;
 
 	status = ioread32(turbomem->mem + STATUS_REGISTER);
 	if (status == 0xFFFFFFFF || (status & STATUS_INTERRUPT_MASK) == 0)
@@ -142,8 +142,9 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 
 static int turbomem_hw_init(struct turbomem_info *turbomem)
 {
-	unsigned regs[4];
-	unsigned reg, i;
+	u32 regs[4];
+	u32 reg;
+	unsigned i;
 	for (i = 0; i < 4; i++) {
 		regs[i] = ioread32(turbomem->mem + i*8);
 	}
