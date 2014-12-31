@@ -14,8 +14,7 @@
 #define STATUS_DMA_ERROR (0x100)
 
 #define INTERRUPT_CTRL_REGISTER (0x20)
-#define INTERRUPT_CTRL_DISABLE_MASK (0xFFFFFFFC)
-#define INTERRUPT_CTRL_ENABLE (0x3)
+#define INTERRUPT_CTRL_ENABLE_BITS (0x3)
 
 static const struct pci_device_id turbomem_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
@@ -44,9 +43,9 @@ static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool acti
 
 	reg = ioread32(turbomem->mem + INTERRUPT_CTRL_REGISTER);
 	if (active)
-		reg |= INTERRUPT_CTRL_ENABLE;
+		reg |= INTERRUPT_CTRL_ENABLE_BITS;
 	else
-		reg &= INTERRUPT_CTRL_DISABLE_MASK;
+		reg &= ~INTERRUPT_CTRL_ENABLE_BITS;
 
 	iowrite32(reg, turbomem->mem + INTERRUPT_CTRL_REGISTER);
 }
