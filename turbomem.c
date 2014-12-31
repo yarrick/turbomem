@@ -104,6 +104,8 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	reg = ioread32(turbomem->mem + STATUS_REGISTER);
 	iowrite32(reg & STATUS_INTERRUPT_MASK, turbomem->mem + STATUS_REGISTER);
 
+	tasklet_schedule(&turbomem->tasklet);
+
 	return IRQ_HANDLED;
 }
 
