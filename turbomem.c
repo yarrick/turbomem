@@ -188,7 +188,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	turbomem->characteristics =
 		(((reg& 0xFFFF0000) + 0x10000) & 0xF0000) | (reg & 0xFFFF);
 
-	turbomem->flash_sectors = turbomem_calc_sectors(reg, turbomem->characteristics);
+	turbomem->flash_sectors = turbomem_calc_sectors(reg,
+		turbomem->characteristics);
 
 	return 0;
 }
@@ -260,7 +261,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	turbomem_set_idle_transfer(turbomem);
 	if (!turbomem->idle_transfer.buf) {
-		dev_err(&dev->dev, "Unable to allocate idle transfer command\n");
+		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
 		ret = -ENOMEM;
 		goto fail_dmapool;
 	}
@@ -292,7 +293,8 @@ static void turbomem_remove(struct pci_dev *dev)
 {
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
-	dma_pool_free(turbomem->dmapool, turbomem->idle_transfer.buf, turbomem->idle_transfer.busaddr);
+	dma_pool_free(turbomem->dmapool, turbomem->idle_transfer.buf,
+		turbomem->idle_transfer.busaddr);
 	dma_pool_destroy(turbomem->dmapool);
 	free_irq(dev->irq, turbomem);
 	tasklet_kill(&turbomem->tasklet);
