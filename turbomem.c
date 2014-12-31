@@ -33,6 +33,7 @@ struct turbomem_info {
 	void __iomem *mem;
 	struct dma_pool *dmapool;
 	struct dma_buf idle_transfer;
+	struct tasklet_struct tasklet;
 	unsigned characteristics;
 	unsigned flash_sectors;
 };
@@ -49,6 +50,14 @@ static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool acti
 
 	iowrite32(reg, turbomem->mem + INTERRUPT_CTRL_REGISTER);
 }
+
+static void turbomem_tasklet(unsigned long privdata)
+{
+	struct turbomem_info *turbomem = (struct turbomem_info *) privdata;
+
+	turbomem_enable_interrupts(turbomem, 1);
+}
+
 
 static unsigned turbomem_calc_sectors(unsigned reg0x38, unsigned chars)
 {
@@ -230,12 +239,16 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_init;
 	}
 
+	tasklet_init(&turbomem->tasklet, turbomem_tasklet,
+		(unsigned long) turbomem);
+
 	ret = request_irq(dev->irq, turbomem_isr, IRQF_SHARED,
 			DRIVER_NAME, turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to request IRQ\n");
 		goto fail_init;
 	}
+
 
 	turbomem->dmapool = dma_pool_create(DRIVER_NAME "_128", &dev->dev,
 		128, 8, 0);
@@ -263,6 +276,7 @@ fail_dmapool:
 	dma_pool_destroy(turbomem->dmapool);
 fail_irq:
 	free_irq(dev->irq, turbomem);
+	tasklet_kill(&turbomem->tasklet);
 fail_init:
 	iounmap(turbomem->mem);
 fail_ioremap:
@@ -281,6 +295,7 @@ static void turbomem_remove(struct pci_dev *dev)
 	dma_pool_free(turbomem->dmapool, turbomem->idle_transfer.buf, turbomem->idle_transfer.busaddr);
 	dma_pool_destroy(turbomem->dmapool);
 	free_irq(dev->irq, turbomem);
+	tasklet_kill(&turbomem->tasklet);
 	iounmap(turbomem->mem);
 	pci_release_regions(dev);
 	pci_disable_device(dev);
