@@ -30,7 +30,8 @@ struct dma_buf {
 struct turbomem_info {
 	struct device *dev;
 	void __iomem *mem;
-	struct dma_pool *dmapool;
+	struct dma_pool *dmapool_cmd;
+	struct dma_pool *dmapool_data;
 	struct dma_buf idle_transfer;
 	struct tasklet_struct tasklet;
 	unsigned characteristics;
@@ -115,7 +116,7 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 	u8 *u8buf;
 	u32 *u32buf;
 
-	buf = dma_pool_alloc(turbomem->dmapool, GFP_KERNEL, &busaddr);
+	buf = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL, &busaddr);
 	if (!buf) {
 		dev_err(turbomem->dev, "Failed to alloc dma buf");
 		return;
@@ -126,7 +127,7 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 	u32buf = (u32 *) buf;
 
 	u32buf[1] = 0x7FFFFFFE;
-	u8buf[0x10] = 0x35;
+	u8buf[0x10] = 0x35; // NOP command
 	u8buf[0x7c] = 0;
 	u8buf[0x35] = 1;
 
@@ -252,20 +253,27 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_init;
 	}
 
-
-	turbomem->dmapool = dma_pool_create(DRIVER_NAME "_128", &dev->dev,
+	turbomem->dmapool_cmd = dma_pool_create(DRIVER_NAME "_cmd", &dev->dev,
 		128, 8, 0);
-	if (!turbomem->dmapool) {
-		dev_err(&dev->dev, "Unable to create DMA pool\n");
+	if (!turbomem->dmapool_cmd) {
+		dev_err(&dev->dev, "Unable to create DMA pool for commands\n");
 		ret = -ENOMEM;
 		goto fail_irq;
+	}
+
+	turbomem->dmapool_data = dma_pool_create(DRIVER_NAME "_data", &dev->dev,
+		4096, 8, 0);
+	if (!turbomem->dmapool_data) {
+		dev_err(&dev->dev, "Unable to create DMA pool for data\n");
+		ret = -ENOMEM;
+		goto fail_dmapool_cmd;
 	}
 
 	turbomem_set_idle_transfer(turbomem);
 	if (!turbomem->idle_transfer.buf) {
 		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
 		ret = -ENOMEM;
-		goto fail_dmapool;
+		goto fail_dmapool_data;
 	}
 
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
@@ -275,8 +283,10 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	return 0;
 
-fail_dmapool:
-	dma_pool_destroy(turbomem->dmapool);
+fail_dmapool_data:
+	dma_pool_destroy(turbomem->dmapool_data);
+fail_dmapool_cmd:
+	dma_pool_destroy(turbomem->dmapool_cmd);
 fail_irq:
 	free_irq(dev->irq, turbomem);
 	tasklet_kill(&turbomem->tasklet);
@@ -295,9 +305,10 @@ static void turbomem_remove(struct pci_dev *dev)
 {
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
-	dma_pool_free(turbomem->dmapool, turbomem->idle_transfer.buf,
+	dma_pool_free(turbomem->dmapool_cmd, turbomem->idle_transfer.buf,
 		turbomem->idle_transfer.busaddr);
-	dma_pool_destroy(turbomem->dmapool);
+	dma_pool_destroy(turbomem->dmapool_data);
+	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
 	tasklet_kill(&turbomem->tasklet);
 	iounmap(turbomem->mem);
