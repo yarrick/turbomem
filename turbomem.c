@@ -19,6 +19,52 @@ struct dma_buf {
 	dma_addr_t busaddr;
 };
 
+struct transfer_command {
+	/* Offset 0000 */
+	__le32 result;
+	/* Offset 0004 */
+	__le32 transfer_flags;
+	/* Offset 0008 */
+	__le64 next_command;
+	/* Offset 0010 */
+	u8 mode;
+	u8 transfer_size;
+	u16 reserved1;
+	/* Offset 0014 */
+	__le32 sector_addr;
+	/* Offset 0018 */
+	__le32 sector_addr2;
+	/* Offset 001C */
+	__le64 data_buffer;
+	u64 reserved2;
+	/* Offset 002C */
+	__le64 metadata_buffer;
+	/* Offset 0034 */
+	u8 first_transfer;
+	u8 last_transfer;
+	u8 data_buffer_valid;
+	u8 metadata_buffer_valid;
+	u64 reserved3;
+	/* Offset 0040 */
+	u64 virtual_ptr1;
+	u32 reserved4;
+	/* Offset 004C */
+	__le32 sector_addr3;
+	/* Offset 0050 */
+	u64 virtual_ptr2;
+	u64 reserved5;
+	u64 reserved6;
+	u32 reserved7;
+	/* Offset 006C */
+	u64 virtual_ptr3;
+	/* Offset 0074 */
+	u64 virtual_ptr4;
+	/* Offset 007C */
+	u8 cmd_one;
+	u8 reserved8;
+	u16 reserved9;
+} __attribute__((packed));
+
 struct turbomem_info {
 	struct device *dev;
 	void __iomem *mem;
@@ -119,7 +165,7 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 	u32buf = (u32 *) buf;
 
 	u32buf[1] = cpu_to_le32(0x7FFFFFFE);
-	u8buf[0x10] = 0x35; // NOP command
+	u8buf[0x10] = 0x35; /* NOP command */
 	u8buf[0x7c] = 0;
 	u8buf[0x35] = 1;
 
@@ -327,6 +373,7 @@ static struct pci_driver pci_driver = {
 
 static int __init turbomem_init(void)
 {
+	BUILD_BUG_ON(sizeof(struct transfer_command) != 0x80);
 	return pci_register_driver(&pci_driver);
 }
 
