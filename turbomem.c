@@ -5,8 +5,10 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/fs.h>
+#include <linux/debugfs.h>
 
 #define DRIVER_NAME "turbomem"
+#define NAME_SIZE 16
 
 #define STATUS_REGISTER (0x18)
 #define STATUS_INTERRUPT_MASK (0x1F)
@@ -68,6 +70,8 @@ struct transfer_command {
 
 struct turbomem_info {
 	struct device *dev;
+	struct dentry *debugfs_dir;
+	char name[NAME_SIZE];
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
 	struct dma_pool *dmapool_data;
@@ -78,6 +82,8 @@ struct turbomem_info {
 };
 
 static int major_nr;
+static atomic_t cardid_allocator = ATOMIC_INIT(-1);
+static struct dentry *debugfs_root = NULL;
 
 static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool active)
 {
@@ -234,6 +240,21 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	return 0;
 }
 
+static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
+{
+	if (IS_ERR_OR_NULL(debugfs_root))
+		return;
+	turbomem->debugfs_dir = debugfs_create_dir(turbomem->name,
+		debugfs_root);
+}
+
+static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
+{
+	if (IS_ERR_OR_NULL(turbomem->debugfs_dir))
+		return;
+	debugfs_remove_recursive(turbomem->debugfs_dir);
+}
+
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
@@ -313,10 +334,17 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_dmapool_data;
 	}
 
+	/* Generate unique card name */
+	memset(turbomem->name, 0, NAME_SIZE);
+	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c",
+		atomic_inc_return(&cardid_allocator) + 'a');
+
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 8);
 
 	pci_set_drvdata(dev, turbomem);
+
+	turbomem_debugfs_dev_add(turbomem);
 
 	return 0;
 
@@ -342,6 +370,7 @@ static void turbomem_remove(struct pci_dev *dev)
 {
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
+	turbomem_debugfs_dev_remove(turbomem);
 	dma_pool_free(turbomem->dmapool_cmd, turbomem->idle_transfer.buf,
 		turbomem->idle_transfer.busaddr);
 	dma_pool_destroy(turbomem->dmapool_data);
@@ -353,6 +382,17 @@ static void turbomem_remove(struct pci_dev *dev)
 	pci_disable_device(dev);
 	pci_set_drvdata(dev, NULL);
 	kfree(turbomem);
+}
+
+static void turbomem_debugfs_init(void)
+{
+	debugfs_root = debugfs_create_dir(DRIVER_NAME, NULL);
+}
+
+static void turbomem_debugfs_cleanup(void)
+{
+	debugfs_remove_recursive(debugfs_root);
+	debugfs_root = NULL;
 }
 
 #define PCI_DEVICE_ID_INTEL_TURBOMEMORY (0x444e)
@@ -375,6 +415,8 @@ static int __init turbomem_init(void)
 	int retval;
 	int err;
 
+	turbomem_debugfs_init();
+
 	BUILD_BUG_ON(sizeof(struct transfer_command) != 0x80);
 	retval = pci_register_driver(&pci_driver);
 	if (retval)
@@ -395,6 +437,7 @@ fail_register_driver:
 
 static void __exit turbomem_exit(void)
 {
+	turbomem_debugfs_cleanup();
 	unregister_blkdev(major_nr, DRIVER_NAME);
 	pci_unregister_driver(&pci_driver);
 }
