@@ -42,13 +42,13 @@ static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool acti
 {
 	u32 reg;
 
-	reg = ioread32(turbomem->mem + INTERRUPT_CTRL_REGISTER);
+	reg = le32_to_cpu(ioread32(turbomem->mem + INTERRUPT_CTRL_REGISTER));
 	if (active)
 		reg |= INTERRUPT_CTRL_ENABLE_BITS;
 	else
 		reg &= ~INTERRUPT_CTRL_ENABLE_BITS;
 
-	iowrite32(reg, turbomem->mem + INTERRUPT_CTRL_REGISTER);
+	iowrite32(cpu_to_le32(reg), turbomem->mem + INTERRUPT_CTRL_REGISTER);
 }
 
 static void turbomem_tasklet(unsigned long privdata)
@@ -92,7 +92,7 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	u32 status;
 	u32 reg;
 
-	status = ioread32(turbomem->mem + STATUS_REGISTER);
+	status = le32_to_cpu(ioread32(turbomem->mem + STATUS_REGISTER));
 	if (status == 0xFFFFFFFF || (status & STATUS_INTERRUPT_MASK) == 0)
 		return IRQ_NONE;
 
@@ -101,8 +101,8 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 
 	turbomem_enable_interrupts(turbomem, 0);
 
-	reg = ioread32(turbomem->mem + STATUS_REGISTER);
-	iowrite32(reg & STATUS_INTERRUPT_MASK, turbomem->mem + STATUS_REGISTER);
+	reg = le32_to_cpu(ioread32(turbomem->mem + STATUS_REGISTER));
+	iowrite32(cpu_to_le32(reg & STATUS_INTERRUPT_MASK), turbomem->mem + STATUS_REGISTER);
 
 	tasklet_schedule(&turbomem->tasklet);
 
@@ -126,12 +126,12 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 	u8buf = (u8 *) buf;
 	u32buf = (u32 *) buf;
 
-	u32buf[1] = 0x7FFFFFFE;
+	u32buf[1] = cpu_to_le32(0x7FFFFFFE);
 	u8buf[0x10] = 0x35; // NOP command
 	u8buf[0x7c] = 0;
 	u8buf[0x35] = 1;
 
-	iowrite32(busaddr, turbomem->mem);
+	iowrite32(cpu_to_le32(busaddr & 0xFFFFFFFF), turbomem->mem);
 
 	turbomem_enable_interrupts(turbomem, 1);
 
@@ -147,28 +147,28 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	u32 reg;
 	unsigned i;
 	for (i = 0; i < 4; i++) {
-		regs[i] = ioread32(turbomem->mem + i*8);
+		regs[i] = le32_to_cpu(ioread32(turbomem->mem + i*8));
 	}
 	reg = regs[0] | regs[1] | regs[2] | regs[3];
 	if (reg) {
 		for (i = 0; i < 4; i++) {
 			reg = 0;
 			if (i == 3) reg = 0x1F;
-			iowrite32(reg, turbomem->mem + i*8);
+			iowrite32(cpu_to_le32(reg), turbomem->mem + i*8);
 		}
 		for (i = 0; i < 4; i++) {
-			regs[i] = ioread32(turbomem->mem + i*8);
+			regs[i] = le32_to_cpu(ioread32(turbomem->mem + i*8));
 		}
 		reg = regs[0] | regs[1] | regs[2] | regs[3];
 		if (reg) {
 			reg = 0x100;
 			i = 16;
-			iowrite32(reg, turbomem->mem + i);
+			iowrite32(cpu_to_le32(reg), turbomem->mem + i);
 			regs[1] |= 1;
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 				if (i) msleep(100);
-				iowrite32(regs[1], turbomem->mem + 8);
-				regs[3] = reg = ioread32(turbomem->mem + 24);
+				iowrite32(cpu_to_le32(regs[1]), turbomem->mem + 8);
+				regs[3] = reg = le32_to_cpu(ioread32(turbomem->mem + 24));
 				if ((reg & 0x00010000) == 0) break;
 			}
 			if (i >= HW_RESET_ATTEMPTS)
@@ -177,17 +177,17 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	}
 
 	regs[1] = (regs[1] & 0xFFFFFFFB) | 1;
-	iowrite32(regs[1], turbomem->mem + 8);
+	iowrite32(cpu_to_le32(regs[1]), turbomem->mem + 8);
 	for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 		if (i) msleep(100);
-		regs[3] = reg = ioread32(turbomem->mem + 24);
+		regs[3] = reg = le32_to_cpu(ioread32(turbomem->mem + 24));
 		if ((reg & 0x00010000) == 0) break;
 	}
 	if (i >= HW_RESET_ATTEMPTS)
 		return -EIO;
 
 	/* Get device characteristics */
-	reg = ioread32(turbomem->mem + 0x38);
+	reg = le32_to_cpu(ioread32(turbomem->mem + 0x38));
 	turbomem->characteristics =
 		(((reg& 0xFFFF0000) + 0x10000) & 0xF0000) | (reg & 0xFFFF);
 
