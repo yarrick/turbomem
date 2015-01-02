@@ -150,30 +150,26 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 {
 	dma_addr_t busaddr;
-	void *buf;
-	u8 *u8buf;
-	u32 *u32buf;
+	struct transfer_command *idle_cmd;
 
-	buf = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL, &busaddr);
-	if (!buf) {
+	idle_cmd = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL, &busaddr);
+	if (!idle_cmd) {
 		dev_err(turbomem->dev, "Failed to alloc dma buf");
 		return;
 	}
 
-	memset(buf, 0, 128);
-	u8buf = (u8 *) buf;
-	u32buf = (u32 *) buf;
+	memset(idle_cmd, 0, sizeof(struct transfer_command));
 
-	u32buf[1] = cpu_to_le32(0x7FFFFFFE);
-	u8buf[0x10] = 0x35; /* NOP command */
-	u8buf[0x7c] = 0;
-	u8buf[0x35] = 1;
+	idle_cmd->transfer_flags = cpu_to_le32(0x7FFFFFFE);
+	idle_cmd->mode = 0x35; /* NOP command */
+	idle_cmd->last_transfer = 1;
+	idle_cmd->cmd_one = 0;
 
 	iowrite32(cpu_to_le32(busaddr & 0xFFFFFFFF), turbomem->mem);
 
 	turbomem_enable_interrupts(turbomem, 1);
 
-	turbomem->idle_transfer.buf = buf;
+	turbomem->idle_transfer.buf = idle_cmd;
 	turbomem->idle_transfer.busaddr = busaddr;
 }
 
