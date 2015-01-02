@@ -288,7 +288,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	turbomem->dmapool_cmd = dma_pool_create(DRIVER_NAME "_cmd", &dev->dev,
-		128, 8, 0);
+		sizeof(struct transfer_command), 8, 0);
 	if (!turbomem->dmapool_cmd) {
 		dev_err(&dev->dev, "Unable to create DMA pool for commands\n");
 		ret = -ENOMEM;
