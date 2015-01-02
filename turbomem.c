@@ -4,6 +4,7 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/fs.h>
 
 #define DRIVER_NAME "turbomem"
 
@@ -75,6 +76,8 @@ struct turbomem_info {
 	unsigned characteristics;
 	unsigned flash_sectors;
 };
+
+static int major_nr;
 
 static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool active)
 {
@@ -369,12 +372,30 @@ static struct pci_driver pci_driver = {
 
 static int __init turbomem_init(void)
 {
+	int retval;
+	int err;
+
 	BUILD_BUG_ON(sizeof(struct transfer_command) != 0x80);
-	return pci_register_driver(&pci_driver);
+	retval = pci_register_driver(&pci_driver);
+	if (retval)
+		return -ENOMEM;
+
+	err = major_nr = register_blkdev(0, DRIVER_NAME);
+	if (err < 0) {
+		retval = -EIO;
+		goto fail_register_driver;
+	}
+
+	return 0;
+
+fail_register_driver:
+	pci_unregister_driver(&pci_driver);
+	return retval;
 }
 
 static void __exit turbomem_exit(void)
 {
+	unregister_blkdev(major_nr, DRIVER_NAME);
 	pci_unregister_driver(&pci_driver);
 }
 
