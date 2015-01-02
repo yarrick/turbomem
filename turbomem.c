@@ -5,8 +5,6 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 
-#define PCI_DEVICE_ID_INTEL_TURBOMEMORY (0x444e)
-
 #define DRIVER_NAME "turbomem"
 
 #define STATUS_REGISTER (0x18)
@@ -15,12 +13,6 @@
 
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
-
-static const struct pci_device_id turbomem_ids[] = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
-	{ 0, }
-};
-MODULE_DEVICE_TABLE(pci, turbomem_ids);
 
 struct dma_buf {
 	void *buf;
@@ -318,6 +310,14 @@ static void turbomem_remove(struct pci_dev *dev)
 	kfree(turbomem);
 }
 
+#define PCI_DEVICE_ID_INTEL_TURBOMEMORY (0x444e)
+
+static const struct pci_device_id turbomem_ids[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TURBOMEMORY), },
+	{ 0, }
+};
+MODULE_DEVICE_TABLE(pci, turbomem_ids);
+
 static struct pci_driver pci_driver = {
 	.name = DRIVER_NAME,
 	.id_table = turbomem_ids,
@@ -336,6 +336,8 @@ static void __exit turbomem_exit(void)
 }
 
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Intel(R) Turbo Memory PCIe flash block device driver");
+MODULE_AUTHOR("Erik Ekman <erik@kryo.se>");
 
 module_init(turbomem_init);
 module_exit(turbomem_exit);
