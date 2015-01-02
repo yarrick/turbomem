@@ -1,0 +1,9 @@
+turbomem
+
+This is the development of a reverse-engineered Linux driver for the Intel(R)
+Turbo Memory PCIe NAND flash chip. The goal is to expose the flash memory as
+a block device. Any caching operations will have to be layered on top by other
+kernel features.
+
+The driver does not yet do much except resetting the chip. Reading from the
+flash is under development next.
