@@ -1,4 +1,5 @@
 *.o
+*.o.d
 *.cmd
 *.ko
 Module.symvers
