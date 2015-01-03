@@ -22,6 +22,8 @@ struct transferbuf_handle {
 	void *buf;
 	/* DMA address to the same buffer, for writing to HW */
 	dma_addr_t busaddr;
+	/* Pointer to next transfer in the chain */
+	struct transferbuf_handle *next;
 };
 
 struct transfer_command {
@@ -77,8 +79,8 @@ struct turbomem_info {
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
 	struct dma_pool *dmapool_data;
-	struct transferbuf_handle idle_transfer;
-	struct transferbuf_handle current_transfer;
+	struct transferbuf_handle *idle_transfer;
+	struct transferbuf_handle *current_transfer;
 	struct tasklet_struct tasklet;
 	unsigned characteristics;
 	unsigned flash_sectors;
@@ -159,18 +161,25 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static int turbomem_transferbuf_alloc(struct turbomem_info *turbomem,
-	struct transferbuf_handle *transferbuf)
+static struct transferbuf_handle *turbomem_transferbuf_alloc(
+	struct turbomem_info *turbomem)
 {
-	memset(transferbuf, 0, sizeof(*transferbuf));
+	struct transferbuf_handle *transferbuf;
+
+	transferbuf = kzalloc(sizeof(*transferbuf), GFP_KERNEL);
+	if (!transferbuf)
+		return NULL;
 
 	transferbuf->buf = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL,
 		&transferbuf->busaddr);
-	if (!transferbuf->buf)
-		return -ENOMEM;
-	return 0;
+	if (!transferbuf->buf) {
+		kfree(transferbuf);
+		return NULL;
+	}
+	return transferbuf;
 }
 
+/* Both the transfer_command and the transferbuf_handle will be freed. */
 static void turbomem_transferbuf_free(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transferbuf)
 {
@@ -342,12 +351,12 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_dmapool_cmd;
 	}
 
-	ret = turbomem_transferbuf_alloc(turbomem, &turbomem->idle_transfer);
+	turbomem->idle_transfer = turbomem_transferbuf_alloc(turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
 		goto fail_dmapool_data;
 	}
-	turbomem_setup_start_idle_transfer(turbomem, &turbomem->idle_transfer);
+	turbomem_setup_start_idle_transfer(turbomem, turbomem->idle_transfer);
 
 	/* Generate unique card name */
 	memset(turbomem->name, 0, NAME_SIZE);
@@ -386,7 +395,7 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
-	turbomem_transferbuf_free(turbomem, &turbomem->idle_transfer);
+	turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_data);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
