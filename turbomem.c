@@ -90,7 +90,8 @@ static int major_nr;
 static atomic_t cardid_allocator = ATOMIC_INIT(-1);
 static struct dentry *debugfs_root = NULL;
 
-static void turbomem_enable_interrupts(struct turbomem_info *turbomem, bool active)
+static void turbomem_enable_interrupts(struct turbomem_info *turbomem,
+	bool active)
 {
 	u32 reg;
 
@@ -154,7 +155,8 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	turbomem_enable_interrupts(turbomem, 0);
 
 	reg = le32_to_cpu(ioread32(turbomem->mem + STATUS_REGISTER));
-	iowrite32(cpu_to_le32(reg & STATUS_INTERRUPT_MASK), turbomem->mem + STATUS_REGISTER);
+	iowrite32(cpu_to_le32(reg & STATUS_INTERRUPT_MASK),
+		turbomem->mem + STATUS_REGISTER);
 
 	tasklet_schedule(&turbomem->tasklet);
 
@@ -198,7 +200,8 @@ static void turbomem_setup_start_idle_transfer(struct turbomem_info *turbomem,
 	idle_cmd->last_transfer = 1;
 	idle_cmd->cmd_one = 0;
 
-	iowrite32(cpu_to_le32(transferbuf->busaddr & 0xFFFFFFFF), turbomem->mem);
+	iowrite32(cpu_to_le32(transferbuf->busaddr & 0xFFFFFFFF),
+		turbomem->mem);
 
 	turbomem_enable_interrupts(turbomem, 1);
 
@@ -234,8 +237,10 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 			regs[1] |= 1;
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 				if (i) msleep(100);
-				iowrite32(cpu_to_le32(regs[1]), turbomem->mem + 8);
-				regs[3] = reg = le32_to_cpu(ioread32(turbomem->mem + 24));
+				iowrite32(cpu_to_le32(regs[1]),
+					turbomem->mem + 8);
+				regs[3] = reg = le32_to_cpu(ioread32(
+					turbomem->mem + 24));
 				if ((reg & 0x00010000) == 0) break;
 			}
 			if (i >= HW_RESET_ATTEMPTS)
