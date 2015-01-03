@@ -17,8 +17,10 @@
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
 
-struct dma_buf {
+struct transferbuf_handle {
+	/* Virtual address of struct transfer_command buffer */
 	void *buf;
+	/* DMA address to the same buffer, for writing to HW */
 	dma_addr_t busaddr;
 };
 
@@ -75,7 +77,8 @@ struct turbomem_info {
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
 	struct dma_pool *dmapool_data;
-	struct dma_buf idle_transfer;
+	struct transferbuf_handle idle_transfer;
+	struct transferbuf_handle current_transfer;
 	struct tasklet_struct tasklet;
 	unsigned characteristics;
 	unsigned flash_sectors;
@@ -156,17 +159,29 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
+static int turbomem_transferbuf_alloc(struct turbomem_info *turbomem,
+	struct transferbuf_handle *transferbuf)
 {
-	dma_addr_t busaddr;
-	struct transfer_command *idle_cmd;
+	memset(transferbuf, 0, sizeof(*transferbuf));
 
-	idle_cmd = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL, &busaddr);
-	if (!idle_cmd) {
-		dev_err(turbomem->dev, "Failed to alloc dma buf");
-		return;
-	}
+	transferbuf->buf = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL,
+		&transferbuf->busaddr);
+	if (!transferbuf->buf)
+		return -ENOMEM;
+	return 0;
+}
 
+static void turbomem_transferbuf_free(struct turbomem_info *turbomem,
+	struct transferbuf_handle *transferbuf)
+{
+	dma_pool_free(turbomem->dmapool_cmd, transferbuf->buf,
+		transferbuf->busaddr);
+}
+
+static void turbomem_setup_start_idle_transfer(struct turbomem_info *turbomem,
+	struct transferbuf_handle *transferbuf)
+{
+	struct transfer_command *idle_cmd = transferbuf->buf;
 	memset(idle_cmd, 0, sizeof(struct transfer_command));
 
 	idle_cmd->transfer_flags = cpu_to_le32(0x7FFFFFFE);
@@ -174,12 +189,12 @@ static void turbomem_set_idle_transfer(struct turbomem_info *turbomem)
 	idle_cmd->last_transfer = 1;
 	idle_cmd->cmd_one = 0;
 
-	iowrite32(cpu_to_le32(busaddr & 0xFFFFFFFF), turbomem->mem);
+	iowrite32(cpu_to_le32(transferbuf->busaddr & 0xFFFFFFFF), turbomem->mem);
 
 	turbomem_enable_interrupts(turbomem, 1);
 
-	turbomem->idle_transfer.buf = idle_cmd;
-	turbomem->idle_transfer.busaddr = busaddr;
+	memcpy(&turbomem->idle_transfer, transferbuf, sizeof(*transferbuf));
+	memcpy(&turbomem->current_transfer, transferbuf, sizeof(*transferbuf));
 }
 
 #define HW_RESET_ATTEMPTS 50
@@ -327,12 +342,12 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_dmapool_cmd;
 	}
 
-	turbomem_set_idle_transfer(turbomem);
-	if (!turbomem->idle_transfer.buf) {
+	ret = turbomem_transferbuf_alloc(turbomem, &turbomem->idle_transfer);
+	if (ret) {
 		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
-		ret = -ENOMEM;
 		goto fail_dmapool_data;
 	}
+	turbomem_setup_start_idle_transfer(turbomem, &turbomem->idle_transfer);
 
 	/* Generate unique card name */
 	memset(turbomem->name, 0, NAME_SIZE);
@@ -371,8 +386,7 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
-	dma_pool_free(turbomem->dmapool_cmd, turbomem->idle_transfer.buf,
-		turbomem->idle_transfer.busaddr);
+	turbomem_transferbuf_free(turbomem, &turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_data);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
