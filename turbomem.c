@@ -200,6 +200,7 @@ static struct transferbuf_handle *turbomem_transferbuf_alloc(
 		return NULL;
 	}
 
+	memset(transferbuf->buf, 0, sizeof(struct transfer_command));
 	INIT_LIST_HEAD(&transferbuf->list);
 	init_completion(&transferbuf->completion);
 	return transferbuf;
@@ -446,13 +447,14 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 	const char __user *user_buf, size_t size, loff_t *ppos)
 {
 	int addr;
-	int sectors;
+	int blocks;
+	int skipped = 0;
 	struct turbomem_info *turbomem = file->f_inode->i_private;
 
 	dev_info(turbomem->dev, "Wiping flash!!");
 	
 	addr = 0x1000;
-	sectors = 0;
+	blocks = 0;
 	do {
 		struct transferbuf_handle *xfer;
 		struct transfer_command *cmd;
@@ -476,16 +478,21 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 		wait_for_completion_interruptible(&xfer->completion);
 
 		if (xfer->status == XFER_FAILED) {
-			turbomem_transferbuf_free(turbomem, xfer);
-			break;
+			skipped++;
+			if (skipped > 100) {
+				turbomem_transferbuf_free(turbomem, xfer);
+				break;
+			}
 		}
 
 		turbomem_transferbuf_free(turbomem, xfer);
-		addr += 0x1000;
-		sectors++;
+		addr += 0x200;
+		if ((addr & 0x400) == 0x400)
+			addr += 0x0c00; /* To next eraseable blocks */
+		blocks++;
 	} while (1);
 
-	dev_info(turbomem->dev, "Wiped %d sectors.", sectors);
+	dev_info(turbomem->dev, "Wiped %d blocks.", blocks);
 	return size;
 }
 

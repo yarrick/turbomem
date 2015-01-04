@@ -18,6 +18,7 @@ Debugfs interface:
 
 * /turbomem/turbomemX/orom (read)
   Dump the embedded disk-filtering Option ROM
+  Example:
 
 # hexdump -C /sys/kernel/debug/turbomem/turbomema/orom
 00000000  55 aa 18 e9 2a 29 3f 3f  3f 3f 3f 3f 3f 3f 3f 3f  |U...*)??????????|
@@ -35,8 +36,9 @@ Debugfs interface:
 
 * /turbomem/turbomemX/wipe_flash (write)
   Write anything here to erase the flash memory. Watch out.
+  Example:
 
 # echo 1 > /sys/kernel/debug/turbomem/turbomema/wipe_flash
 turbomem 0000:04:00.0: Wiping flash!!
-turbomem 0000:04:00.0: Wiped 243 sectors.
+turbomem 0000:04:00.0: Wiped 16316 blocks.
 
