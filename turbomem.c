@@ -187,6 +187,8 @@ static void turbomem_transferbuf_free(struct turbomem_info *turbomem,
 {
 	dma_pool_free(turbomem->dmapool_cmd, transferbuf->buf,
 		transferbuf->busaddr);
+
+	kfree(transferbuf);
 }
 
 static void turbomem_setup_start_idle_transfer(struct turbomem_info *turbomem,
@@ -205,8 +207,8 @@ static void turbomem_setup_start_idle_transfer(struct turbomem_info *turbomem,
 
 	turbomem_enable_interrupts(turbomem, 1);
 
-	memcpy(&turbomem->idle_transfer, transferbuf, sizeof(*transferbuf));
-	memcpy(&turbomem->current_transfer, transferbuf, sizeof(*transferbuf));
+	turbomem->idle_transfer = transferbuf;
+	turbomem->current_transfer = transferbuf;
 }
 
 #define HW_RESET_ATTEMPTS 50
@@ -399,7 +401,12 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
-	turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
+	if (turbomem->current_transfer == turbomem->idle_transfer)
+		turbomem->current_transfer = NULL;
+	if (turbomem->idle_transfer)
+		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
+	if (turbomem->current_transfer)
+		turbomem_transferbuf_free(turbomem, turbomem->current_transfer);
 	dma_pool_destroy(turbomem->dmapool_data);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
