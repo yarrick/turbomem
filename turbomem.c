@@ -22,9 +22,13 @@
 #include <linux/interrupt.h>
 #include <linux/fs.h>
 #include <linux/debugfs.h>
+#include <linux/genhd.h>
+#include <linux/blkdev.h>
+#include <linux/hdreg.h>
 
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 16
+#define DISK_MINORS 8
 
 #define STATUS_REGISTER (0x18)
 #define STATUS_INTERRUPT_MASK (0x1F)
@@ -107,12 +111,17 @@ struct turbomem_info {
 	char name[NAME_SIZE];
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
-	struct dma_pool *dmapool_data;
 	spinlock_t lock;
 	struct list_head transfer_queue;
 	struct transferbuf_handle *curr_transfer;
 	struct transferbuf_handle *idle_transfer;
 	struct tasklet_struct tasklet;
+	struct gendisk *gendisk;
+	spinlock_t queue_lock;
+	struct request_queue *request_queue;
+	struct request *req;
+	struct workqueue_struct *io_queue;
+	struct work_struct io_work;
 	atomic_t irq_statusword;
 	unsigned characteristics;
 	unsigned flash_sectors;
@@ -230,7 +239,6 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transfer)
 {
 	dma_addr_t busaddr = transfer->busaddr;
-	/* Since we use 32-bit DMA mask upper half should be zero, but.. */
 	writele32(turbomem, 4, (busaddr >> 32) & 0xFFFFFFFF);
 	writele32(turbomem, 0, busaddr & 0xFFFFFFFF);
 }
@@ -413,7 +421,7 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	if (!xfer)
 		return -ENOMEM;
 
-	buf4k = dma_pool_alloc(turbomem->dmapool_data, GFP_KERNEL, &bus4k);
+	buf4k = dma_alloc_coherent(turbomem->dev, 4096, &bus4k, GFP_KERNEL);
 	if (!buf4k) {
 		turbomem_transferbuf_free(turbomem, xfer);
 		return -ENOMEM;
@@ -446,7 +454,7 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 		buf4k, 4096);
 	*ppos += offset_backup;
 out:
-	dma_pool_free(turbomem->dmapool_data, buf4k, bus4k);
+	dma_free_coherent(turbomem->dev, 4096, buf4k, bus4k);
 	turbomem_transferbuf_free(turbomem, xfer);
 	return retval;
 }
@@ -534,9 +542,113 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
+static void turbomem_io_work(struct work_struct *work)
+{
+	int sectors;
+	sector_t lba;
+	struct turbomem_info *turbomem = container_of(work,
+		struct turbomem_info, io_work);
+
+	while (1) {
+		spin_lock_bh(&turbomem->queue_lock);
+		if (!turbomem->req)
+			turbomem->req = blk_fetch_request(
+						turbomem->request_queue);
+		spin_unlock_bh(&turbomem->queue_lock);
+		if (!turbomem->req)
+			return;
+
+		lba = blk_rq_pos(turbomem->req);
+		sectors = blk_rq_cur_sectors(turbomem->req);
+		printk(KERN_INFO "Req at sector %08lX for %u bytes\n",
+			lba, sectors*512);
+
+		/* Fake completion */
+		spin_lock_bh(&turbomem->queue_lock);
+		if (!__blk_end_request(turbomem->req, 0, sectors*512))
+			turbomem->req = NULL;
+		spin_unlock_bh(&turbomem->queue_lock);
+	}
+}
+
+static void turbomem_request(struct request_queue *q)
+{
+	struct turbomem_info *turbomem = q->queuedata;
+
+	if (turbomem->req)
+		return;
+
+	queue_work(turbomem->io_queue, &turbomem->io_work);
+}
+
+static int turbomem_prepare_req(struct request_queue *q, struct request *req)
+{
+	if (req->cmd_type != REQ_TYPE_FS &&
+			req->cmd_type != REQ_TYPE_BLOCK_PC) {
+		blk_dump_rq_flags(req, "Unsupported request");
+		return BLKPREP_KILL;
+	}
+	req->cmd_flags |= REQ_DONTPREP;
+	return BLKPREP_OK;
+}
+
+
+static int turbomem_getgeo(struct block_device *bdev, struct hd_geometry *geo)
+{
+	geo->heads 	= 64;
+	geo->sectors	= 32;
+	geo->cylinders	= 4*1024*1024 / (geo->heads * geo->sectors);
+	geo->start	= 0;
+	return 0;
+}
+
+static const struct block_device_operations turbomem_disk_ops = {
+	.owner	= THIS_MODULE,
+	.getgeo	= turbomem_getgeo,
+};
+
+static int turbomem_setup_disk(struct turbomem_info *turbomem, int cardid)
+{
+	turbomem->request_queue = blk_init_queue(turbomem_request,
+		&turbomem->queue_lock);
+	if (!turbomem->request_queue)
+		return -ENOMEM;
+
+	turbomem->request_queue->queuedata = turbomem;
+	blk_queue_prep_rq(turbomem->request_queue, turbomem_prepare_req);
+	turbomem->io_queue = alloc_ordered_workqueue(DRIVER_NAME,
+		WQ_MEM_RECLAIM);
+	INIT_WORK(&turbomem->io_work, turbomem_io_work);
+	blk_queue_max_segments(turbomem->request_queue, 1);
+	blk_queue_max_hw_sectors(turbomem->request_queue, 8);
+	blk_queue_logical_block_size(turbomem->request_queue, 512);
+	blk_queue_physical_block_size(turbomem->request_queue, 512);
+	/* Keep requests within same 4k-block */
+	blk_queue_segment_boundary(turbomem->request_queue, 0xfff);
+
+	turbomem->gendisk = alloc_disk(DISK_MINORS);
+	if (!turbomem->gendisk) {
+		blk_cleanup_queue(turbomem->request_queue);
+		return -ENOMEM;
+	}
+
+	strncpy(turbomem->gendisk->disk_name, turbomem->name, NAME_SIZE);
+	turbomem->gendisk->major = major_nr;
+	turbomem->gendisk->first_minor = cardid * DISK_MINORS;
+	turbomem->gendisk->private_data = turbomem;
+	turbomem->gendisk->queue = turbomem->request_queue;
+	turbomem->gendisk->fops = &turbomem_disk_ops;
+	set_capacity(turbomem->gendisk, 4*1024*1024);
+	/* Until writes are implemented.. */
+	set_disk_ro(turbomem->gendisk, 1);
+	add_disk(turbomem->gendisk);
+	return 0;
+}
+
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
+	int cardid;
 	struct turbomem_info *turbomem;
 
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n",
@@ -552,6 +664,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_enable;
 	}
 
+	pci_set_drvdata(dev, turbomem);
 	pci_set_master(dev);
 	turbomem->dev = &dev->dev;
 
@@ -568,7 +681,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_ioremap;
 	}
 
-	ret = dma_set_mask(turbomem->dev, DMA_BIT_MASK(32));
+	ret = dma_set_mask(turbomem->dev, DMA_BIT_MASK(64));
 	if (ret) {
 		dev_err(&dev->dev, "No usable DMA configuration\n");
 		goto fail_init;
@@ -598,18 +711,10 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_irq;
 	}
 
-	turbomem->dmapool_data = dma_pool_create(DRIVER_NAME "_data", &dev->dev,
-		4096, 8, 0);
-	if (!turbomem->dmapool_data) {
-		dev_err(&dev->dev, "Unable to create DMA pool for data\n");
-		ret = -ENOMEM;
-		goto fail_dmapool_cmd;
-	}
-
 	turbomem->idle_transfer = turbomem_transferbuf_alloc(turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
-		goto fail_dmapool_data;
+		goto fail_dmapool_cmd;
 	}
 	turbomem_start_idle_transfer(turbomem);
 
@@ -617,20 +722,22 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	INIT_LIST_HEAD(&turbomem->transfer_queue);
 
 	/* Generate unique card name */
-	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c",
-		atomic_inc_return(&cardid_allocator) + 'a');
+	cardid = atomic_inc_return(&cardid_allocator);
+	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c", cardid + 'a');
+
+	ret = turbomem_setup_disk(turbomem, cardid);
+	if (ret)
+		goto fail_idle_transfer;
 
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 8);
-
-	pci_set_drvdata(dev, turbomem);
 
 	turbomem_debugfs_dev_add(turbomem);
 
 	return 0;
 
-fail_dmapool_data:
-	dma_pool_destroy(turbomem->dmapool_data);
+fail_idle_transfer:
+	turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 fail_dmapool_cmd:
 	dma_pool_destroy(turbomem->dmapool_cmd);
 fail_irq:
@@ -652,9 +759,10 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
+	del_gendisk(turbomem->gendisk);
+	blk_cleanup_queue(turbomem->request_queue);
 	if (turbomem->idle_transfer)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
-	dma_pool_destroy(turbomem->dmapool_data);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
 	tasklet_kill(&turbomem->tasklet);
