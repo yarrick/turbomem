@@ -80,7 +80,6 @@ struct turbomem_info {
 	struct dma_pool *dmapool_cmd;
 	struct dma_pool *dmapool_data;
 	struct transferbuf_handle *idle_transfer;
-	struct transferbuf_handle *current_transfer;
 	struct tasklet_struct tasklet;
 	unsigned characteristics;
 	unsigned flash_sectors;
@@ -191,24 +190,32 @@ static void turbomem_transferbuf_free(struct turbomem_info *turbomem,
 	kfree(transferbuf);
 }
 
-static void turbomem_setup_start_idle_transfer(struct turbomem_info *turbomem,
-	struct transferbuf_handle *transferbuf)
+static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
+	struct transferbuf_handle *transfer)
 {
-	struct transfer_command *idle_cmd = transferbuf->buf;
+	dma_addr_t busaddr = transfer->busaddr;
+	u32 upper = (busaddr >> 32) & 0xFFFFFFFF;
+	u32 lower = busaddr & 0xFFFFFFFF;
+	iowrite32(cpu_to_le32(upper), turbomem->mem + 4);
+	iowrite32(cpu_to_le32(lower), turbomem->mem);
+}
+
+static void turbomem_setup_idle_transfer(struct turbomem_info *turbomem)
+{
+	struct transfer_command *idle_cmd = turbomem->idle_transfer->buf;
 	memset(idle_cmd, 0, sizeof(struct transfer_command));
 
 	idle_cmd->transfer_flags = cpu_to_le32(0x7FFFFFFE);
 	idle_cmd->mode = 0x35; /* NOP command */
 	idle_cmd->last_transfer = 1;
 	idle_cmd->cmd_one = 0;
+}
 
-	iowrite32(cpu_to_le32(transferbuf->busaddr & 0xFFFFFFFF),
-		turbomem->mem);
-
+static void turbomem_start_idle_transfer(struct turbomem_info *turbomem)
+{
+	turbomem_setup_idle_transfer(turbomem);
+	turbomem_write_transfer_to_hw(turbomem, turbomem->idle_transfer);
 	turbomem_enable_interrupts(turbomem, 1);
-
-	turbomem->idle_transfer = transferbuf;
-	turbomem->current_transfer = transferbuf;
 }
 
 #define HW_RESET_ATTEMPTS 50
@@ -362,7 +369,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
 		goto fail_dmapool_data;
 	}
-	turbomem_setup_start_idle_transfer(turbomem, turbomem->idle_transfer);
+	turbomem_start_idle_transfer(turbomem);
 
 	/* Generate unique card name */
 	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c",
@@ -400,12 +407,8 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
-	if (turbomem->current_transfer == turbomem->idle_transfer)
-		turbomem->current_transfer = NULL;
 	if (turbomem->idle_transfer)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
-	if (turbomem->current_transfer)
-		turbomem_transferbuf_free(turbomem, turbomem->current_transfer);
 	dma_pool_destroy(turbomem->dmapool_data);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
