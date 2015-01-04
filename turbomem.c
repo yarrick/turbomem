@@ -365,7 +365,6 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	turbomem_setup_start_idle_transfer(turbomem, turbomem->idle_transfer);
 
 	/* Generate unique card name */
-	memset(turbomem->name, 0, NAME_SIZE);
 	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c",
 		atomic_inc_return(&cardid_allocator) + 'a');
 
