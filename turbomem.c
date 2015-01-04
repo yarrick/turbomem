@@ -169,9 +169,6 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	if (status == 0xFFFFFFFF || (status & STATUS_INTERRUPT_MASK) == 0)
 		return IRQ_NONE;
 
-	dev_info(turbomem->dev, "Got IRQ on line %d, status is %08X\n",
-		irq, status);
-
 	atomic_set(&turbomem->irq_statusword, status);
 	turbomem_enable_interrupts(turbomem, 0);
 
@@ -314,6 +311,12 @@ static void turbomem_tasklet(unsigned long privdata)
 			/* Transfer completed */
 			turbomem->curr_transfer->status = XFER_DONE;
 		} else {
+			struct transfer_command *cmd =
+				turbomem->curr_transfer->buf;
+			dev_info(turbomem->dev,
+				"Transfer at addr %08X returned error %08X",
+				le32_to_cpu(cmd->sector_addr), status);
+
 			/* Transfer failed */
 			turbomem->curr_transfer->status = XFER_FAILED;
 		}
