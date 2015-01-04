@@ -48,6 +48,7 @@ struct transferbuf_handle {
 	struct list_head list;
 	/* Operation status */
 	enum xfer_status status;
+	struct completion completion;
 };
 
 struct transfer_command {
@@ -201,6 +202,7 @@ static struct transferbuf_handle *turbomem_transferbuf_alloc(
 	}
 
 	INIT_LIST_HEAD(&transferbuf->list);
+	init_completion(&transferbuf->completion);
 	return transferbuf;
 }
 
@@ -315,6 +317,7 @@ static void turbomem_tasklet(unsigned long privdata)
 			/* Transfer failed */
 			turbomem->curr_transfer->status = XFER_FAILED;
 		}
+		complete_all(&turbomem->curr_transfer->completion);
 		turbomem->curr_transfer = NULL;
 	}
 	spin_unlock_bh(&turbomem->lock);
@@ -417,8 +420,7 @@ static ssize_t read_orom(struct file *file, char __user *userbuf,
 	turbomem_queue_transfer(turbomem, xfer);
 	turbomem_start_next_transfer(turbomem);
 
-	/* TODO wait for completion from tasklet instead */
-	msleep(15);
+	wait_for_completion_interruptible(&xfer->completion);
 
 	if (xfer->status == XFER_FAILED) {
 		/* Got error on transfer, end of OROM */
