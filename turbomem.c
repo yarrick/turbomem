@@ -30,6 +30,10 @@
 #define STATUS_INTERRUPT_MASK (0x1F)
 #define STATUS_BOOTING (0x00010000)
 
+#define COMMAND_REGISTER (0x10)
+#define COMMAND_START_DMA (1)
+#define COMMAND_RESET (0x100)
+
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
 
@@ -285,7 +289,8 @@ static void turbomem_start_next_transfer(struct turbomem_info *turbomem)
 		/* Write addr, enable IRQ and DMA */
 		turbomem_write_transfer_to_hw(turbomem, handle);
 		turbomem_enable_interrupts(turbomem, 1);
-		iowrite32(cpu_to_le32(1), turbomem->mem + 0x10);
+		iowrite32(cpu_to_le32(COMMAND_START_DMA),
+			turbomem->mem + COMMAND_REGISTER);
 	}
 
 	/* If nothing queued, start idle transfer instead */
@@ -352,8 +357,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 		}
 		if (initregs) {
 			u32 reg8 = 1 | le32_to_cpu(ioread32(turbomem->mem + 8));
-			u32 reg16 = 0x100;
-			iowrite32(cpu_to_le32(reg16), turbomem->mem + 16);
+			iowrite32(cpu_to_le32(COMMAND_RESET),
+				turbomem->mem + COMMAND_REGISTER);
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 				if (i) msleep(100);
 				iowrite32(cpu_to_le32(reg8), turbomem->mem + 8);
