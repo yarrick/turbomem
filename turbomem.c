@@ -100,7 +100,6 @@ struct transfer_command {
 struct turbomem_info {
 	struct device *dev;
 	struct dentry *debugfs_dir;
-	struct dentry *debugfs_f_orom;
 	char name[NAME_SIZE];
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
@@ -385,8 +384,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	return 0;
 }
 
-static ssize_t read_orom(struct file *file, char __user *userbuf,
-	size_t count, loff_t *ppos)
+static ssize_t turbomem_debugfs_read_orom(struct file *file,
+	char __user *userbuf, size_t count, loff_t *ppos)
 {
 	struct transferbuf_handle *xfer;
 	struct transfer_command *cmd;
@@ -440,7 +439,58 @@ out:
 }
 
 static const struct file_operations debugfs_orom_fops = {
-	.read	= read_orom,
+	.read	= turbomem_debugfs_read_orom,
+};
+
+static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
+	const char __user *user_buf, size_t size, loff_t *ppos)
+{
+	int addr;
+	int sectors;
+	struct turbomem_info *turbomem = file->f_inode->i_private;
+
+	dev_info(turbomem->dev, "Wiping flash!!");
+	
+	addr = 0x1000;
+	sectors = 0;
+	do {
+		struct transferbuf_handle *xfer;
+		struct transfer_command *cmd;
+
+		xfer = turbomem_transferbuf_alloc(turbomem);
+		if (!xfer)
+			break;
+
+		cmd = xfer->buf;
+		cmd->result = 3;
+		cmd->transfer_flags = cpu_to_le32(0x80000001);
+		cmd->mode = 0x11; // Erase
+		cmd->transfer_size = 0;
+		cmd->sector_addr = addr;
+		cmd->sector_addr2 = addr;
+		cmd->data_buffer_valid = 0;
+
+		turbomem_queue_transfer(turbomem, xfer);
+		turbomem_start_next_transfer(turbomem);
+
+		wait_for_completion_interruptible(&xfer->completion);
+
+		if (xfer->status == XFER_FAILED) {
+			turbomem_transferbuf_free(turbomem, xfer);
+			break;
+		}
+
+		turbomem_transferbuf_free(turbomem, xfer);
+		addr += 0x1000;
+		sectors++;
+	} while (1);
+
+	dev_info(turbomem->dev, "Wiped %d sectors.", sectors);
+	return size;
+}
+
+static const struct file_operations debugfs_wipe_flash_fops = {
+	.write	= turbomem_debugfs_wipe_flash,
 };
 
 static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
@@ -454,6 +504,8 @@ static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
 		return;
 	debugfs_create_file("orom", 0400, turbomem->debugfs_dir, turbomem,
 		&debugfs_orom_fops);
+	debugfs_create_file("wipe_flash", 0200, turbomem->debugfs_dir,
+		turbomem, &debugfs_wipe_flash_fops);
 }
 
 static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
