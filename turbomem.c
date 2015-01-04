@@ -127,6 +127,11 @@ static u32 readle32(struct turbomem_info *turbomem, u32 offset)
 	return le32_to_cpu(ioread32(turbomem->mem + offset));
 }
 
+static void writele32(struct turbomem_info *turbomem, u32 offset, u32 value)
+{
+	iowrite32(cpu_to_le32(value), turbomem->mem + offset);
+}
+
 static void turbomem_enable_interrupts(struct turbomem_info *turbomem,
 	bool active)
 {
@@ -138,7 +143,7 @@ static void turbomem_enable_interrupts(struct turbomem_info *turbomem,
 	else
 		reg &= ~INTERRUPT_CTRL_ENABLE_BITS;
 
-	iowrite32(cpu_to_le32(reg), turbomem->mem + INTERRUPT_CTRL_REGISTER);
+	writele32(turbomem, INTERRUPT_CTRL_REGISTER, reg);
 }
 
 static unsigned turbomem_calc_sectors(u32 reg0x38, unsigned chars)
@@ -182,8 +187,7 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	turbomem_enable_interrupts(turbomem, 0);
 
 	reg = readle32(turbomem, STATUS_REGISTER);
-	iowrite32(cpu_to_le32(reg & STATUS_INTERRUPT_MASK),
-		turbomem->mem + STATUS_REGISTER);
+	writele32(turbomem, STATUS_REGISTER, reg & STATUS_INTERRUPT_MASK);
 
 	tasklet_schedule(&turbomem->tasklet);
 
@@ -226,11 +230,9 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transfer)
 {
 	dma_addr_t busaddr = transfer->busaddr;
-	/* Since we use 32-bit DMA mask upper should be zero, but.. */
-	u32 upper = (busaddr >> 32) & 0xFFFFFFFF;
-	u32 lower = busaddr & 0xFFFFFFFF;
-	iowrite32(cpu_to_le32(upper), turbomem->mem + 4);
-	iowrite32(cpu_to_le32(lower), turbomem->mem);
+	/* Since we use 32-bit DMA mask upper half should be zero, but.. */
+	writele32(turbomem, 4, (busaddr >> 32) & 0xFFFFFFFF);
+	writele32(turbomem, 0, busaddr & 0xFFFFFFFF);
 }
 
 static void turbomem_setup_idle_transfer(struct turbomem_info *turbomem)
@@ -294,8 +296,7 @@ static void turbomem_start_next_transfer(struct turbomem_info *turbomem)
 		/* Write addr, enable IRQ and DMA */
 		turbomem_write_transfer_to_hw(turbomem, handle);
 		turbomem_enable_interrupts(turbomem, 1);
-		iowrite32(cpu_to_le32(COMMAND_START_DMA),
-			turbomem->mem + COMMAND_REGISTER);
+		writele32(turbomem, COMMAND_REGISTER, COMMAND_START_DMA);
 	}
 
 	/* If nothing queued, start idle transfer instead */
@@ -354,7 +355,7 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 		for (i = 0; i < 4; i++) {
 			reg = 0;
 			if (i == 3) reg = 0x1F;
-			iowrite32(cpu_to_le32(reg), turbomem->mem + i*8);
+			writele32(turbomem, i*8, reg);
 		}
 		initregs = 0;
 		for (i = 0; i < 4; i++) {
@@ -362,11 +363,10 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 		}
 		if (initregs) {
 			u32 reg8 = 1 | readle32(turbomem, 8);
-			iowrite32(cpu_to_le32(COMMAND_RESET),
-				turbomem->mem + COMMAND_REGISTER);
+			writele32(turbomem, COMMAND_REGISTER, COMMAND_RESET);
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 				if (i) msleep(100);
-				iowrite32(cpu_to_le32(reg8), turbomem->mem + 8);
+				writele32(turbomem, 8, reg8);
 				reg = readle32(turbomem, STATUS_REGISTER);
 				if ((reg & STATUS_BOOTING) == 0) break;
 			}
@@ -377,7 +377,7 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 
 	reg = readle32(turbomem, 8);
 	reg = (reg & 0xFFFFFFFB) | 1;
-	iowrite32(cpu_to_le32(reg), turbomem->mem + 8);
+	writele32(turbomem, 8, reg);
 	for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 		if (i) msleep(100);
 		reg = readle32(turbomem, STATUS_REGISTER);
