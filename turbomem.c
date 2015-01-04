@@ -455,7 +455,7 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 	struct turbomem_info *turbomem = file->f_inode->i_private;
 
 	dev_info(turbomem->dev, "Wiping flash!!");
-	
+
 	addr = 0x1000;
 	blocks = 0;
 	do {
@@ -685,33 +685,33 @@ static struct pci_driver pci_driver = {
 static int __init turbomem_init(void)
 {
 	int retval;
-	int err;
+
+	BUILD_BUG_ON(sizeof(struct transfer_command) != 0x80);
 
 	turbomem_debugfs_init();
 
-	BUILD_BUG_ON(sizeof(struct transfer_command) != 0x80);
+	retval = major_nr = register_blkdev(0, DRIVER_NAME);
+	if (retval < 0)
+		goto fail_debugfs;
+
 	retval = pci_register_driver(&pci_driver);
 	if (retval)
-		return -ENOMEM;
-
-	err = major_nr = register_blkdev(0, DRIVER_NAME);
-	if (err < 0) {
-		retval = -EIO;
-		goto fail_register_driver;
-	}
+		goto fail_blkdev;
 
 	return 0;
 
-fail_register_driver:
-	pci_unregister_driver(&pci_driver);
+fail_blkdev:
+	unregister_blkdev(major_nr, DRIVER_NAME);
+fail_debugfs:
+	turbomem_debugfs_cleanup();
 	return retval;
 }
 
 static void __exit turbomem_exit(void)
 {
-	turbomem_debugfs_cleanup();
-	unregister_blkdev(major_nr, DRIVER_NAME);
 	pci_unregister_driver(&pci_driver);
+	unregister_blkdev(major_nr, DRIVER_NAME);
+	turbomem_debugfs_cleanup();
 }
 
 MODULE_LICENSE("GPL");
