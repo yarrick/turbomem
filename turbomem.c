@@ -12,7 +12,7 @@
 
 #define STATUS_REGISTER (0x18)
 #define STATUS_INTERRUPT_MASK (0x1F)
-#define STATUS_DMA_ERROR (0x100)
+#define STATUS_BOOTING (0x00010000)
 
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
@@ -213,47 +213,46 @@ static void turbomem_setup_start_idle_transfer(struct turbomem_info *turbomem,
 
 static int turbomem_hw_init(struct turbomem_info *turbomem)
 {
-	u32 regs[4];
+	u32 initregs;
 	u32 reg;
 	unsigned i;
+	initregs = 0;
 	for (i = 0; i < 4; i++) {
-		regs[i] = le32_to_cpu(ioread32(turbomem->mem + i*8));
+		initregs |= le32_to_cpu(ioread32(turbomem->mem + i*8));
 	}
-	reg = regs[0] | regs[1] | regs[2] | regs[3];
-	if (reg) {
+	if (initregs) {
 		for (i = 0; i < 4; i++) {
 			reg = 0;
 			if (i == 3) reg = 0x1F;
 			iowrite32(cpu_to_le32(reg), turbomem->mem + i*8);
 		}
+		initregs = 0;
 		for (i = 0; i < 4; i++) {
-			regs[i] = le32_to_cpu(ioread32(turbomem->mem + i*8));
+			initregs |= le32_to_cpu(ioread32(turbomem->mem + i*8));
 		}
-		reg = regs[0] | regs[1] | regs[2] | regs[3];
-		if (reg) {
-			reg = 0x100;
-			i = 16;
-			iowrite32(cpu_to_le32(reg), turbomem->mem + i);
-			regs[1] |= 1;
+		if (initregs) {
+			u32 reg8 = 1 | le32_to_cpu(ioread32(turbomem->mem + 8));
+			u32 reg16 = 0x100;
+			iowrite32(cpu_to_le32(reg16), turbomem->mem + 16);
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 				if (i) msleep(100);
-				iowrite32(cpu_to_le32(regs[1]),
-					turbomem->mem + 8);
-				regs[3] = reg = le32_to_cpu(ioread32(
-					turbomem->mem + 24));
-				if ((reg & 0x00010000) == 0) break;
+				iowrite32(cpu_to_le32(reg8), turbomem->mem + 8);
+				reg = le32_to_cpu(ioread32(
+					turbomem->mem + STATUS_REGISTER));
+				if ((reg & STATUS_BOOTING) == 0) break;
 			}
 			if (i >= HW_RESET_ATTEMPTS)
 				return -EIO;
 		}
 	}
 
-	regs[1] = (regs[1] & 0xFFFFFFFB) | 1;
-	iowrite32(cpu_to_le32(regs[1]), turbomem->mem + 8);
+	reg = le32_to_cpu(ioread32(turbomem->mem + 8));
+	reg = (reg & 0xFFFFFFFB) | 1;
+	iowrite32(cpu_to_le32(reg), turbomem->mem + 8);
 	for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 		if (i) msleep(100);
-		regs[3] = reg = le32_to_cpu(ioread32(turbomem->mem + 24));
-		if ((reg & 0x00010000) == 0) break;
+		reg = le32_to_cpu(ioread32(turbomem->mem + STATUS_REGISTER));
+		if ((reg & STATUS_BOOTING) == 0) break;
 	}
 	if (i >= HW_RESET_ATTEMPTS)
 		return -EIO;
