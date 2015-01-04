@@ -17,13 +17,21 @@
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
 
+enum xfer_status {
+	XFER_QUEUED = 0,
+	XFER_DONE,
+	XFER_FAILED,
+};
+
 struct transferbuf_handle {
 	/* Virtual address of struct transfer_command buffer */
 	void *buf;
 	/* DMA address to the same buffer, for writing to HW */
 	dma_addr_t busaddr;
-	/* Pointer to next transfer in the chain */
-	struct transferbuf_handle *next;
+	/* Linked list item */
+	struct list_head list;
+	/* Operation status */
+	enum xfer_status status;
 };
 
 struct transfer_command {
@@ -75,12 +83,17 @@ struct transfer_command {
 struct turbomem_info {
 	struct device *dev;
 	struct dentry *debugfs_dir;
+	struct dentry *debugfs_f_orom;
 	char name[NAME_SIZE];
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
 	struct dma_pool *dmapool_data;
+	spinlock_t lock;
+	struct list_head transfer_queue;
+	struct transferbuf_handle *curr_transfer;
 	struct transferbuf_handle *idle_transfer;
 	struct tasklet_struct tasklet;
+	atomic_t irq_statusword;
 	unsigned characteristics;
 	unsigned flash_sectors;
 };
@@ -102,14 +115,6 @@ static void turbomem_enable_interrupts(struct turbomem_info *turbomem,
 
 	iowrite32(cpu_to_le32(reg), turbomem->mem + INTERRUPT_CTRL_REGISTER);
 }
-
-static void turbomem_tasklet(unsigned long privdata)
-{
-	struct turbomem_info *turbomem = (struct turbomem_info *) privdata;
-
-	turbomem_enable_interrupts(turbomem, 1);
-}
-
 
 static unsigned turbomem_calc_sectors(u32 reg0x38, unsigned chars)
 {
@@ -151,6 +156,7 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	dev_info(turbomem->dev, "Got IRQ on line %d, status is %08X\n",
 		irq, status);
 
+	atomic_set(&turbomem->irq_statusword, status);
 	turbomem_enable_interrupts(turbomem, 0);
 
 	reg = le32_to_cpu(ioread32(turbomem->mem + STATUS_REGISTER));
@@ -177,6 +183,8 @@ static struct transferbuf_handle *turbomem_transferbuf_alloc(
 		kfree(transferbuf);
 		return NULL;
 	}
+
+	INIT_LIST_HEAD(&transferbuf->list);
 	return transferbuf;
 }
 
@@ -194,6 +202,7 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transfer)
 {
 	dma_addr_t busaddr = transfer->busaddr;
+	/* Since we use 32-bit DMA mask upper should be zero, but.. */
 	u32 upper = (busaddr >> 32) & 0xFFFFFFFF;
 	u32 lower = busaddr & 0xFFFFFFFF;
 	iowrite32(cpu_to_le32(upper), turbomem->mem + 4);
@@ -216,6 +225,86 @@ static void turbomem_start_idle_transfer(struct turbomem_info *turbomem)
 	turbomem_setup_idle_transfer(turbomem);
 	turbomem_write_transfer_to_hw(turbomem, turbomem->idle_transfer);
 	turbomem_enable_interrupts(turbomem, 1);
+}
+
+static void turbomem_queue_transfer(struct turbomem_info *turbomem,
+	struct transferbuf_handle *transfer)
+{
+	if (transfer == turbomem->idle_transfer) {
+		dev_warn(turbomem->dev,
+			"Blocked attempt to queue the idle transfer");
+		WARN_ON(transfer == turbomem->idle_transfer);
+		return;
+	}
+
+	spin_lock_bh(&turbomem->lock);
+	list_add_tail(&transfer->list, &turbomem->transfer_queue);
+	spin_unlock_bh(&turbomem->lock);
+}
+
+static void turbomem_start_next_transfer(struct turbomem_info *turbomem)
+{
+	spin_lock_bh(&turbomem->lock);
+
+	if (!list_empty(&turbomem->transfer_queue)
+		&& !turbomem->curr_transfer) {
+
+		struct transfer_command *cmd;
+		struct transferbuf_handle *handle;
+		struct list_head *elem;
+		elem = turbomem->transfer_queue.next;
+		list_del(elem);
+		handle= list_entry(elem, struct transferbuf_handle, list);
+
+		/* Chain idle transfer as next item */
+		cmd = handle->buf;
+		turbomem_setup_idle_transfer(turbomem);
+		cmd->next_command = cpu_to_le64(
+			turbomem->idle_transfer->busaddr);
+
+		/* Mark first job */
+		cmd = handle->buf;
+		cmd->first_transfer = 1;
+		turbomem->curr_transfer = handle;
+
+		/* Write addr, enable IRQ and DMA */
+		turbomem_write_transfer_to_hw(turbomem, handle);
+		turbomem_enable_interrupts(turbomem, 1);
+		iowrite32(cpu_to_le32(1), turbomem->mem + 0x10);
+	}
+
+	/* If nothing queued, start idle transfer instead */
+	if (!turbomem->curr_transfer)
+		turbomem_start_idle_transfer(turbomem);
+
+	spin_unlock_bh(&turbomem->lock);
+}
+
+static void turbomem_tasklet(unsigned long privdata)
+{
+	int status;
+	u64 curr_transfer;
+	struct turbomem_info *turbomem = (struct turbomem_info *) privdata;
+
+	status = atomic_read(&turbomem->irq_statusword);
+	curr_transfer = le64_to_cpu(ioread32(turbomem->mem) |
+		((u64) ioread32(turbomem->mem + 4)) << 32);
+
+	spin_lock_bh(&turbomem->lock);
+	if (turbomem->curr_transfer) {
+		if (status == 1) {
+			/* Transfer completed */
+			turbomem->curr_transfer->status = XFER_DONE;
+		} else {
+			/* Transfer failed */
+			turbomem->curr_transfer->status = XFER_FAILED;
+		}
+		turbomem->curr_transfer = NULL;
+	}
+	spin_unlock_bh(&turbomem->lock);
+
+	/* This will re-enable interrupts, directly or via idle transfer */
+	turbomem_start_next_transfer(turbomem);
 }
 
 #define HW_RESET_ATTEMPTS 50
@@ -277,12 +366,76 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	return 0;
 }
 
+static ssize_t read_orom(struct file *file, char __user *userbuf,
+	size_t count, loff_t *ppos)
+{
+	struct transferbuf_handle *xfer;
+	struct transfer_command *cmd;
+	struct turbomem_info *turbomem = file->f_inode->i_private;
+	dma_addr_t bus4k;
+	u8 *buf4k;
+	loff_t offset_backup;
+	ssize_t retval;
+	int addr = 0x20 + 2 * (*ppos / 512);
+
+	xfer = turbomem_transferbuf_alloc(turbomem);
+	if (!xfer)
+		return -ENOMEM;
+
+	buf4k = dma_pool_alloc(turbomem->dmapool_data, GFP_KERNEL, &bus4k);
+	if (!buf4k) {
+		turbomem_transferbuf_free(turbomem, xfer);
+		return -ENOMEM;
+	}
+	memset(buf4k, 0, 4096);
+
+	cmd = xfer->buf;
+	cmd->result = 3;
+	cmd->transfer_flags = cpu_to_le32(0x80000001);
+	cmd->mode = 1; // Read
+	cmd->transfer_size = 8; // sectors *512 = 4k
+	cmd->sector_addr = addr;
+	cmd->data_buffer = cpu_to_le64(bus4k);
+	cmd->data_buffer_valid = 1;
+
+	turbomem_queue_transfer(turbomem, xfer);
+	turbomem_start_next_transfer(turbomem);
+
+	/* TODO wait for completion from tasklet instead */
+	msleep(15);
+
+	if (xfer->status == XFER_FAILED) {
+		/* Got error on transfer, end of OROM */
+		retval = 0;
+		goto out;
+	}
+
+	offset_backup = *ppos & 0xFFFF000;
+	*ppos &= 0xFFF; /* Read within 4k-buf */
+	retval = simple_read_from_buffer(userbuf, count, ppos,
+		buf4k, 4096);
+	*ppos += offset_backup;
+out:
+	dma_pool_free(turbomem->dmapool_data, buf4k, bus4k);
+	turbomem_transferbuf_free(turbomem, xfer);
+	return retval;
+}
+
+static const struct file_operations debugfs_orom_fops = {
+	.read	= read_orom,
+};
+
 static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
 {
 	if (IS_ERR_OR_NULL(debugfs_root))
 		return;
 	turbomem->debugfs_dir = debugfs_create_dir(turbomem->name,
 		debugfs_root);
+
+	if (IS_ERR_OR_NULL(turbomem->debugfs_dir))
+		return;
+	debugfs_create_file("orom", 0400, turbomem->debugfs_dir, turbomem,
+		&debugfs_orom_fops);
 }
 
 static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
@@ -370,6 +523,9 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_dmapool_data;
 	}
 	turbomem_start_idle_transfer(turbomem);
+
+	spin_lock_init(&turbomem->lock);
+	INIT_LIST_HEAD(&turbomem->transfer_queue);
 
 	/* Generate unique card name */
 	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c",
