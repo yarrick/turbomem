@@ -622,10 +622,6 @@ static void turbomem_io_work(struct work_struct *work)
 		sglength  = blk_rq_map_sg(turbomem->request_queue,
 			turbomem->req, sg);
 		pci_map_sg(pci_dev, sg, sglength, dma_dir);
-		printk(KERN_INFO
-			"Req at sector %08lX for %u bytes, buf %08llX len %d\n",
-			lba, sectors*512, sg[0].dma_address, sg[0].length);
-
 		error = turbomem_do_io(turbomem, lba, sectors, xfer,
 			sg, is_write);
 		pci_unmap_sg(pci_dev, sg, sglength, dma_dir);
