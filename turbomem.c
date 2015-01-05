@@ -549,14 +549,28 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
+static sector_t turbomem_translate_lba_read(sector_t lba)
+{
+	/* Every other 4kB area is not used */
+	sector_t lower = 2 * (lba & 0xFF);
+	/* 256 usable sectors appear at even intervals */
+	sector_t upper = 0x1000 * (lba >> 8);
+	/* First three 256-sector blocks are not for disk usage */
+	return (upper + 0x3000) | lower;
+}
+
 static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	int sectors, struct transferbuf_handle *xfer,
 	struct scatterlist *sg, int write)
 {
 	struct transfer_command *cmd = xfer->buf;
-	u8 mode = 1;
-	if (write)
+	u8 mode;
+	if (write) {
 		mode = 6;
+	} else {
+		mode = 1;
+		lba = turbomem_translate_lba_read(lba);
+	}
 
 	cmd = xfer->buf;
 	cmd->result = 3;
