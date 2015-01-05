@@ -542,14 +542,53 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
+static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
+	int sectors, struct transferbuf_handle *xfer,
+	struct scatterlist *sg, int write)
+{
+	struct transfer_command *cmd = xfer->buf;
+	u8 mode = 1;
+	if (write)
+		mode = 6;
+
+	cmd = xfer->buf;
+	cmd->result = 3;
+	cmd->transfer_flags = cpu_to_le32(0x80000001);
+	cmd->mode = mode;
+	cmd->transfer_size = sectors;
+	cmd->sector_addr = lba;
+	cmd->data_buffer = cpu_to_le64(sg->dma_address);
+	cmd->data_buffer_valid = 1;
+
+	turbomem_queue_transfer(turbomem, xfer);
+	turbomem_start_next_transfer(turbomem);
+
+	wait_for_completion_interruptible(&xfer->completion);
+
+	if (xfer->status == XFER_FAILED) {
+		/* Got error on transfer */
+		return -EBADMSG;
+	}
+	return 0;
+}
+
 static void turbomem_io_work(struct work_struct *work)
 {
-	int sectors;
-	sector_t lba;
+	struct scatterlist sg[2];
 	struct turbomem_info *turbomem = container_of(work,
 		struct turbomem_info, io_work);
+	struct pci_dev *pci_dev = container_of(turbomem->dev,
+		struct pci_dev, dev);
 
 	while (1) {
+		struct transferbuf_handle *xfer = NULL;
+		int sglength;
+		int sectors;
+		int error;
+		int len;
+		int is_write;
+		sector_t lba;
+		enum dma_data_direction dma_dir;
 		spin_lock_bh(&turbomem->queue_lock);
 		if (!turbomem->req)
 			turbomem->req = blk_fetch_request(
@@ -560,14 +599,38 @@ static void turbomem_io_work(struct work_struct *work)
 
 		lba = blk_rq_pos(turbomem->req);
 		sectors = blk_rq_cur_sectors(turbomem->req);
-		printk(KERN_INFO "Req at sector %08lX for %u bytes\n",
-			lba, sectors*512);
+		len = sectors * 512;
+		is_write = rq_data_dir(turbomem->req);
+		if (is_write)
+			dma_dir = DMA_TO_DEVICE;
+		else
+			dma_dir = DMA_FROM_DEVICE;
+		xfer = turbomem_transferbuf_alloc(turbomem);
+		if (!xfer) {
+			error = -ENOMEM;
+			goto end_req;
+		}
 
-		/* Fake completion */
+		sg_init_table(sg, ARRAY_SIZE(sg));
+		sglength  = blk_rq_map_sg(turbomem->request_queue,
+			turbomem->req, sg);
+		pci_map_sg(pci_dev, sg, sglength, dma_dir);
+		printk(KERN_INFO
+			"Req at sector %08lX for %u bytes, buf %08llX len %d\n",
+			lba, sectors*512, sg[0].dma_address, sg[0].length);
+
+		error = turbomem_do_io(turbomem, lba, sectors, xfer,
+			sg, is_write);
+		pci_unmap_sg(pci_dev, sg, sglength, dma_dir);
+
+end_req:
 		spin_lock_bh(&turbomem->queue_lock);
-		if (!__blk_end_request(turbomem->req, 0, sectors*512))
+		if (!__blk_end_request(turbomem->req, error, len))
 			turbomem->req = NULL;
 		spin_unlock_bh(&turbomem->queue_lock);
+		if (xfer)
+			turbomem_transferbuf_free(turbomem, xfer);
+		xfer = NULL;
 	}
 }
 
@@ -623,6 +686,7 @@ static int turbomem_setup_disk(struct turbomem_info *turbomem, int cardid)
 	blk_queue_max_hw_sectors(turbomem->request_queue, 8);
 	blk_queue_logical_block_size(turbomem->request_queue, 512);
 	blk_queue_physical_block_size(turbomem->request_queue, 512);
+	blk_queue_bounce_limit(turbomem->request_queue, DMA_BIT_MASK(32));
 	/* Keep requests within same 4k-block */
 	blk_queue_segment_boundary(turbomem->request_queue, 0xfff);
 
@@ -681,7 +745,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_ioremap;
 	}
 
-	ret = dma_set_mask(turbomem->dev, DMA_BIT_MASK(64));
+	ret = dma_set_mask(turbomem->dev, DMA_BIT_MASK(32));
 	if (ret) {
 		dev_err(&dev->dev, "No usable DMA configuration\n");
 		goto fail_init;
