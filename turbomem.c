@@ -125,6 +125,7 @@ struct turbomem_info {
 	atomic_t irq_statusword;
 	unsigned characteristics;
 	unsigned flash_sectors;
+	unsigned usable_flash_sectors;
 };
 
 static int major_nr;
@@ -155,31 +156,42 @@ static void turbomem_enable_interrupts(struct turbomem_info *turbomem,
 	writele32(turbomem, INTERRUPT_CTRL_REGISTER, reg);
 }
 
-static unsigned turbomem_calc_sectors(u32 reg0x38, unsigned chars)
+static void turbomem_calc_sectors(struct turbomem_info *turbomem)
 {
+	unsigned sectors;
+	unsigned reg;
 	unsigned limit8, limit14;
-	unsigned d = (reg0x38 >> 0xC) & 0xF;
+	unsigned d;
 	unsigned c = 1;
 	unsigned i = 0;
 
+	/* Get device characteristics */
+	reg = readle32(turbomem, 0x38);
+	turbomem->characteristics = ((reg & 0xFFFFF) + 0x10000) & 0xFFFFF;
+
+	d = (reg >> 0xC) & 0xF;
 	do {
 		c = c * 2;
 		i++;
 	} while (i < d);
 	limit8 = i << 10;
 
-	d = (reg0x38 >> 16) & 0xF;
+	d = (reg >> 16) & 0xF;
 	limit14 = d + 1;
 
-	d = 0x400 << ((chars >> 0xC) & 0xF);
+	d = 0x400 << ((turbomem->characteristics >> 0xC) & 0xF);
 	if (d > limit8)
 		limit8 = d;
 
-	d = ((chars >> 0x16) & 0xF);
+	d = ((turbomem->characteristics >> 0x16) & 0xF);
 	if (d > limit14)
 		limit14 = d;
 
-	return (limit8 * limit14) * 64;
+	sectors = (limit8 * limit14) * 512;
+
+	turbomem->flash_sectors = sectors;
+	/* First three 256-sector blocks are reserved */
+	turbomem->usable_flash_sectors = sectors - 0x600;
 }
 
 static irqreturn_t turbomem_isr(int irq, void *dev)
@@ -280,6 +292,7 @@ static void turbomem_start_next_transfer(struct turbomem_info *turbomem)
 {
 	spin_lock_bh(&turbomem->lock);
 
+	/* TODO start more than one transfer at a time */
 	if (!list_empty(&turbomem->transfer_queue)
 		&& !turbomem->curr_transfer) {
 
@@ -394,13 +407,7 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	if (i >= HW_RESET_ATTEMPTS)
 		return -EIO;
 
-	/* Get device characteristics */
-	reg = readle32(turbomem, 0x38);
-	turbomem->characteristics =
-		(((reg& 0xFFFF0000) + 0x10000) & 0xF0000) | (reg & 0xFFFF);
-
-	turbomem->flash_sectors = turbomem_calc_sectors(reg,
-		turbomem->characteristics);
+	turbomem_calc_sectors(turbomem);
 
 	return 0;
 }
@@ -658,9 +665,11 @@ static int turbomem_prepare_req(struct request_queue *q, struct request *req)
 
 static int turbomem_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
+	struct turbomem_info *turbomem = bdev->bd_disk->private_data;
 	geo->heads 	= 64;
 	geo->sectors	= 32;
-	geo->cylinders	= 4*1024*1024 / (geo->heads * geo->sectors);
+	geo->cylinders	= turbomem->usable_flash_sectors /
+				(geo->heads * geo->sectors);
 	geo->start	= 0;
 	return 0;
 }
@@ -702,7 +711,7 @@ static int turbomem_setup_disk(struct turbomem_info *turbomem, int cardid)
 	turbomem->gendisk->private_data = turbomem;
 	turbomem->gendisk->queue = turbomem->request_queue;
 	turbomem->gendisk->fops = &turbomem_disk_ops;
-	set_capacity(turbomem->gendisk, 4*1024*1024);
+	set_capacity(turbomem->gendisk, turbomem->usable_flash_sectors);
 	/* Until writes are implemented.. */
 	set_disk_ro(turbomem->gendisk, 1);
 	add_disk(turbomem->gendisk);
@@ -794,7 +803,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_idle_transfer;
 
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
-		turbomem->characteristics, turbomem->flash_sectors >> 8);
+		turbomem->characteristics, turbomem->flash_sectors >> 11);
 
 	turbomem_debugfs_dev_add(turbomem);
 
