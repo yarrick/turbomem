@@ -44,6 +44,7 @@
 enum xfer_status {
 	XFER_QUEUED = 0,
 	XFER_DONE,
+	XFER_BAD_OR_ERASED_BANK,
 	XFER_FAILED,
 };
 
@@ -342,14 +343,17 @@ static void turbomem_tasklet(unsigned long privdata)
 		if (status == 1) {
 			/* Transfer completed */
 			turbomem->curr_transfer->status = XFER_DONE;
+		} else if (status == 2) {
+			/* Transfer stopped, bad or erased sector */
+			turbomem->curr_transfer->status =
+						XFER_BAD_OR_ERASED_BANK;
 		} else {
+			/* Other error */
 			struct transfer_command *cmd =
 				turbomem->curr_transfer->buf;
 			dev_info(turbomem->dev,
 				"Transfer at addr %08X returned error %08X",
 				le32_to_cpu(cmd->sector_addr), status);
-
-			/* Transfer failed */
 			turbomem->curr_transfer->status = XFER_FAILED;
 		}
 		complete_all(&turbomem->curr_transfer->completion);
@@ -449,7 +453,7 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 
 	wait_for_completion_interruptible(&xfer->completion);
 
-	if (xfer->status == XFER_FAILED) {
+	if (xfer->status != XFER_DONE) {
 		/* Got error on transfer, end of OROM */
 		retval = 0;
 		goto out;
@@ -504,7 +508,7 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 
 		wait_for_completion_interruptible(&xfer->completion);
 
-		if (xfer->status == XFER_FAILED) {
+		if (xfer->status != XFER_DONE) {
 			skipped++;
 			if (skipped > 100) {
 				turbomem_transferbuf_free(turbomem, xfer);
@@ -586,10 +590,10 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 
 	wait_for_completion_interruptible(&xfer->completion);
 
-	if (xfer->status == XFER_FAILED) {
-		/* Got error on transfer */
+	/* Check error on transfer */
+	if (xfer->status != XFER_DONE)
 		return -EBADMSG;
-	}
+
 	return 0;
 }
 
@@ -638,6 +642,14 @@ static void turbomem_io_work(struct work_struct *work)
 		pci_map_sg(pci_dev, sg, sglength, dma_dir);
 		error = turbomem_do_io(turbomem, lba, sectors, xfer,
 			sg, is_write);
+		if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
+			/* Reading non-written page gives error.
+			   Send back zeroed result instead */
+			void *data = bio_data(turbomem->req->bio);
+			if (data)
+				memset(data, 0, sectors*512);
+			error = 0;
+		}
 		pci_unmap_sg(pci_dev, sg, sglength, dma_dir);
 
 end_req:
