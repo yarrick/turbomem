@@ -29,6 +29,7 @@
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 16
 #define DISK_MINORS 8
+#define RESERERVED_SECTORS 0x300
 
 #define STATUS_REGISTER (0x18)
 #define STATUS_INTERRUPT_MASK (0x1F)
@@ -191,7 +192,7 @@ static void turbomem_calc_sectors(struct turbomem_info *turbomem)
 
 	turbomem->flash_sectors = sectors;
 	/* First three 256-sector blocks are reserved */
-	turbomem->usable_flash_sectors = sectors - 0x600;
+	turbomem->usable_flash_sectors = sectors - RESERERVED_SECTORS;
 }
 
 static irqreturn_t turbomem_isr(int irq, void *dev)
@@ -558,8 +559,7 @@ static sector_t turbomem_translate_lba_read(sector_t lba)
 	sector_t lower = 2 * (lba & 0xFF);
 	/* 256 usable sectors appear at even intervals */
 	sector_t upper = 0x1000 * (lba >> 8);
-	/* First three 256-sector blocks are not for disk usage */
-	return (upper + 0x3000) | lower;
+	return upper | lower;
 }
 
 static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
@@ -621,7 +621,8 @@ static void turbomem_io_work(struct work_struct *work)
 		if (!req)
 			return;
 
-		lba = blk_rq_pos(req);
+		/* Block device does not have access to first 768 sectors */
+		lba = blk_rq_pos(req) + RESERERVED_SECTORS;
 		sectors = blk_rq_cur_sectors(req);
 		len = sectors * 512;
 		is_write = rq_data_dir(req);
@@ -636,8 +637,7 @@ static void turbomem_io_work(struct work_struct *work)
 		}
 
 		sg_init_table(sg, ARRAY_SIZE(sg));
-		sglength  = blk_rq_map_sg(turbomem->request_queue,
-			req, sg);
+		sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
 		pci_map_sg(pci_dev, sg, sglength, dma_dir);
 		error = turbomem_do_io(turbomem, lba, sectors, xfer,
 			sg, is_write);
