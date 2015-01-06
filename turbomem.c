@@ -120,7 +120,6 @@ struct turbomem_info {
 	struct gendisk *gendisk;
 	spinlock_t queue_lock;
 	struct request_queue *request_queue;
-	struct request *req;
 	struct workqueue_struct *io_queue;
 	struct work_struct io_work;
 	atomic_t irq_statusword;
@@ -604,6 +603,7 @@ static void turbomem_io_work(struct work_struct *work)
 		struct turbomem_info, io_work);
 	struct pci_dev *pci_dev = container_of(turbomem->dev,
 		struct pci_dev, dev);
+	struct request *req = NULL;
 
 	while (1) {
 		struct transferbuf_handle *xfer = NULL;
@@ -615,17 +615,16 @@ static void turbomem_io_work(struct work_struct *work)
 		sector_t lba;
 		enum dma_data_direction dma_dir;
 		spin_lock_bh(&turbomem->queue_lock);
-		if (!turbomem->req)
-			turbomem->req = blk_fetch_request(
-						turbomem->request_queue);
+		if (!req)
+			req = blk_fetch_request(turbomem->request_queue);
 		spin_unlock_bh(&turbomem->queue_lock);
-		if (!turbomem->req)
+		if (!req)
 			return;
 
-		lba = blk_rq_pos(turbomem->req);
-		sectors = blk_rq_cur_sectors(turbomem->req);
+		lba = blk_rq_pos(req);
+		sectors = blk_rq_cur_sectors(req);
 		len = sectors * 512;
-		is_write = rq_data_dir(turbomem->req);
+		is_write = rq_data_dir(req);
 		if (is_write)
 			dma_dir = DMA_TO_DEVICE;
 		else
@@ -638,14 +637,14 @@ static void turbomem_io_work(struct work_struct *work)
 
 		sg_init_table(sg, ARRAY_SIZE(sg));
 		sglength  = blk_rq_map_sg(turbomem->request_queue,
-			turbomem->req, sg);
+			req, sg);
 		pci_map_sg(pci_dev, sg, sglength, dma_dir);
 		error = turbomem_do_io(turbomem, lba, sectors, xfer,
 			sg, is_write);
 		if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
 			/* Reading non-written page gives error.
 			   Send back zeroed result instead */
-			void *data = bio_data(turbomem->req->bio);
+			void *data = bio_data(req->bio);
 			if (data)
 				memset(data, 0, sectors*512);
 			error = 0;
@@ -654,8 +653,8 @@ static void turbomem_io_work(struct work_struct *work)
 
 end_req:
 		spin_lock_bh(&turbomem->queue_lock);
-		if (!__blk_end_request(turbomem->req, error, len))
-			turbomem->req = NULL;
+		if (!__blk_end_request(req, error, len))
+			req = NULL;
 		spin_unlock_bh(&turbomem->queue_lock);
 		if (xfer)
 			turbomem_transferbuf_free(turbomem, xfer);
@@ -666,9 +665,6 @@ end_req:
 static void turbomem_request(struct request_queue *q)
 {
 	struct turbomem_info *turbomem = q->queuedata;
-
-	if (turbomem->req)
-		return;
 
 	queue_work(turbomem->io_queue, &turbomem->io_work);
 }
