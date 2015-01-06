@@ -45,12 +45,12 @@
 /*
  * There are also other modes:
  * Some kind of read:  2 3
- * Some kind of write: 5
- * Unknown: 0x31 7 +more?
+ * Some kind of write: 5 6
+ * Unknown: 0x31 +more?
  */
 enum iomode {
 	MODE_READ = 1,
-	MODE_WRITE = 6,
+	MODE_WRITE = 7,
 	MODE_ERASE = 0x11,
 	MODE_NOP = 0x35,
 };
@@ -378,7 +378,7 @@ static void turbomem_tasklet(unsigned long privdata)
 	turbomem_start_next_transfer(turbomem);
 }
 
-static sector_t turbomem_translate_lba_read(sector_t lba)
+static sector_t turbomem_translate_lba(sector_t lba)
 {
 	/* Every other 4kB area is not used */
 	sector_t lower = 2 * (lba & 0xFF);
@@ -389,16 +389,10 @@ static sector_t turbomem_translate_lba_read(sector_t lba)
 
 static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	int sectors, struct transferbuf_handle *xfer,
-	dma_addr_t busaddr, int write)
+	dma_addr_t busaddr, enum iomode mode)
 {
 	struct transfer_command *cmd = xfer->buf;
-	u8 mode;
-	if (write) {
-		mode = MODE_WRITE;
-	} else {
-		mode = MODE_READ;
-		lba = turbomem_translate_lba_read(lba);
-	}
+	lba = turbomem_translate_lba(lba);
 
 	cmd = xfer->buf;
 	cmd->result = 3;
@@ -406,6 +400,8 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	cmd->mode = mode;
 	cmd->transfer_size = sectors;
 	cmd->sector_addr = lba;
+	if (mode != MODE_READ)
+		cmd->sector_addr2 = lba;
 	cmd->data_buffer = cpu_to_le64(busaddr);
 	cmd->data_buffer_valid = 1;
 
@@ -494,7 +490,8 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	}
 	memset(buf4k, 0, 4096);
 
-	retval = turbomem_do_io(turbomem, addr, 4096/512, xfer, bus4k, 0);
+	retval = turbomem_do_io(turbomem, addr, 4096/512, xfer, bus4k,
+			MODE_READ);
 	if (xfer->status != XFER_DONE) {
 		/* Got error on transfer, end of OROM */
 		retval = 0;
@@ -607,6 +604,7 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 	int is_write;
 	sector_t lba;
 	enum dma_data_direction dma_dir;
+	enum iomode mode;
 
 	*transferred_len = 0;
 	if (req->cmd_type != REQ_TYPE_FS)
@@ -619,10 +617,13 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 		return -EIO;
 	len = sectors * 512;
 	is_write = rq_data_dir(req);
-	if (is_write)
+	if (is_write) {
 		dma_dir = DMA_TO_DEVICE;
-	else
+		mode = MODE_WRITE;
+	} else {
 		dma_dir = DMA_FROM_DEVICE;
+		mode = MODE_READ;
+	}
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer) {
 		return -ENOMEM;
@@ -632,7 +633,7 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 	sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
 	dma_map_sg(turbomem->dev, sg, sglength, dma_dir);
 	error = turbomem_do_io(turbomem, lba, sectors, xfer,
-		sg->dma_address, is_write);
+		sg->dma_address, mode);
 	if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
 		/* Reading non-written page gives error.
 		   Send back zeroed result instead */
@@ -731,8 +732,6 @@ static int turbomem_setup_disk(struct turbomem_info *turbomem, int cardid)
 	turbomem->gendisk->queue = turbomem->request_queue;
 	turbomem->gendisk->fops = &turbomem_disk_ops;
 	set_capacity(turbomem->gendisk, turbomem->usable_flash_sectors);
-	/* Until writes are implemented.. */
-	set_disk_ro(turbomem->gendisk, 1);
 	add_disk(turbomem->gendisk);
 	return 0;
 }
