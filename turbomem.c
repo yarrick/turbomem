@@ -684,7 +684,9 @@ static int turbomem_prepare_req(struct request_queue *q, struct request *req)
 static int turbomem_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
 	struct turbomem_info *turbomem = bdev->bd_disk->private_data;
-	geo->heads 	= 64;
+	/* Usable flash sectors is a multiple of 256,
+	 * so make (heads * sectors) equal to that. */
+	geo->heads 	= 8;
 	geo->sectors	= 32;
 	geo->cylinders	= turbomem->usable_flash_sectors /
 				(geo->heads * geo->sectors);
