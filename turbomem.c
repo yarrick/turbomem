@@ -374,6 +374,40 @@ static sector_t turbomem_translate_lba_read(sector_t lba)
 	return upper | lower;
 }
 
+static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
+	int sectors, struct transferbuf_handle *xfer,
+	dma_addr_t busaddr, int write)
+{
+	struct transfer_command *cmd = xfer->buf;
+	u8 mode;
+	if (write) {
+		mode = 6;
+	} else {
+		mode = 1;
+		lba = turbomem_translate_lba_read(lba);
+	}
+
+	cmd = xfer->buf;
+	cmd->result = 3;
+	cmd->transfer_flags = cpu_to_le32(0x80000001);
+	cmd->mode = mode;
+	cmd->transfer_size = sectors;
+	cmd->sector_addr = lba;
+	cmd->data_buffer = cpu_to_le64(busaddr);
+	cmd->data_buffer_valid = 1;
+
+	turbomem_queue_transfer(turbomem, xfer);
+	turbomem_start_next_transfer(turbomem);
+
+	wait_for_completion_interruptible(&xfer->completion);
+
+	/* Check error on transfer */
+	if (xfer->status != XFER_DONE)
+		return -EBADMSG;
+
+	return 0;
+}
+
 #define HW_RESET_ATTEMPTS 50
 
 static int turbomem_hw_init(struct turbomem_info *turbomem)
@@ -429,13 +463,12 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	char __user *userbuf, size_t count, loff_t *ppos)
 {
 	struct transferbuf_handle *xfer;
-	struct transfer_command *cmd;
 	struct turbomem_info *turbomem = file->f_inode->i_private;
 	dma_addr_t bus4k;
 	u8 *buf4k;
 	loff_t offset_backup;
 	ssize_t retval;
-	sector_t addr = turbomem_translate_lba_read(0x10 + (*ppos / 512));
+	sector_t addr = 0x10 + (*ppos / 512);
 
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
@@ -448,20 +481,7 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	}
 	memset(buf4k, 0, 4096);
 
-	cmd = xfer->buf;
-	cmd->result = 3;
-	cmd->transfer_flags = cpu_to_le32(0x80000001);
-	cmd->mode = 1; // Read
-	cmd->transfer_size = 8; // sectors *512 = 4k
-	cmd->sector_addr = addr;
-	cmd->data_buffer = cpu_to_le64(bus4k);
-	cmd->data_buffer_valid = 1;
-
-	turbomem_queue_transfer(turbomem, xfer);
-	turbomem_start_next_transfer(turbomem);
-
-	wait_for_completion_interruptible(&xfer->completion);
-
+	retval = turbomem_do_io(turbomem, addr, 4096/512, xfer, bus4k, 0);
 	if (xfer->status != XFER_DONE) {
 		/* Got error on transfer, end of OROM */
 		retval = 0;
@@ -562,40 +582,6 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
-static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
-	int sectors, struct transferbuf_handle *xfer,
-	struct scatterlist *sg, int write)
-{
-	struct transfer_command *cmd = xfer->buf;
-	u8 mode;
-	if (write) {
-		mode = 6;
-	} else {
-		mode = 1;
-		lba = turbomem_translate_lba_read(lba);
-	}
-
-	cmd = xfer->buf;
-	cmd->result = 3;
-	cmd->transfer_flags = cpu_to_le32(0x80000001);
-	cmd->mode = mode;
-	cmd->transfer_size = sectors;
-	cmd->sector_addr = lba;
-	cmd->data_buffer = cpu_to_le64(sg->dma_address);
-	cmd->data_buffer_valid = 1;
-
-	turbomem_queue_transfer(turbomem, xfer);
-	turbomem_start_next_transfer(turbomem);
-
-	wait_for_completion_interruptible(&xfer->completion);
-
-	/* Check error on transfer */
-	if (xfer->status != XFER_DONE)
-		return -EBADMSG;
-
-	return 0;
-}
-
 static int turbomem_work_request(struct turbomem_info *turbomem,
 	struct request *req, size_t *transferred_len)
 {
@@ -635,7 +621,7 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 	sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
 	pci_map_sg(pci_dev, sg, sglength, dma_dir);
 	error = turbomem_do_io(turbomem, lba, sectors, xfer,
-		sg, is_write);
+		sg->dma_address, is_write);
 	if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
 		/* Reading non-written page gives error.
 		   Send back zeroed result instead */
