@@ -365,6 +365,15 @@ static void turbomem_tasklet(unsigned long privdata)
 	turbomem_start_next_transfer(turbomem);
 }
 
+static sector_t turbomem_translate_lba_read(sector_t lba)
+{
+	/* Every other 4kB area is not used */
+	sector_t lower = 2 * (lba & 0xFF);
+	/* 256 usable sectors appear at even intervals */
+	sector_t upper = 0x1000 * (lba >> 8);
+	return upper | lower;
+}
+
 #define HW_RESET_ATTEMPTS 50
 
 static int turbomem_hw_init(struct turbomem_info *turbomem)
@@ -426,7 +435,7 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	u8 *buf4k;
 	loff_t offset_backup;
 	ssize_t retval;
-	int addr = 0x20 + 2 * (*ppos / 512);
+	sector_t addr = turbomem_translate_lba_read(0x10 + (*ppos / 512));
 
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
@@ -551,15 +560,6 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	if (IS_ERR_OR_NULL(turbomem->debugfs_dir))
 		return;
 	debugfs_remove_recursive(turbomem->debugfs_dir);
-}
-
-static sector_t turbomem_translate_lba_read(sector_t lba)
-{
-	/* Every other 4kB area is not used */
-	sector_t lower = 2 * (lba & 0xFF);
-	/* 256 usable sectors appear at even intervals */
-	sector_t upper = 0x1000 * (lba >> 8);
-	return upper | lower;
 }
 
 static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
