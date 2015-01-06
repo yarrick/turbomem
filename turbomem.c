@@ -42,6 +42,19 @@
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
 
+/*
+ * There are also other modes:
+ * Some kind of read:  2 3
+ * Some kind of write: 5
+ * Unknown: 0x31 7 +more?
+ */
+enum iomode {
+	MODE_READ = 1,
+	MODE_WRITE = 6,
+	MODE_ERASE = 0x11,
+	MODE_NOP = 0x35,
+};
+
 enum xfer_status {
 	XFER_QUEUED = 0,
 	XFER_DONE,
@@ -262,7 +275,7 @@ static void turbomem_setup_idle_transfer(struct turbomem_info *turbomem)
 	memset(idle_cmd, 0, sizeof(struct transfer_command));
 
 	idle_cmd->transfer_flags = cpu_to_le32(0x7FFFFFFE);
-	idle_cmd->mode = 0x35; /* NOP command */
+	idle_cmd->mode = MODE_NOP;
 	idle_cmd->last_transfer = 1;
 	idle_cmd->cmd_one = 0;
 }
@@ -381,9 +394,9 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	struct transfer_command *cmd = xfer->buf;
 	u8 mode;
 	if (write) {
-		mode = 6;
+		mode = MODE_WRITE;
 	} else {
-		mode = 1;
+		mode = MODE_READ;
 		lba = turbomem_translate_lba_read(lba);
 	}
 
@@ -526,7 +539,7 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 		cmd = xfer->buf;
 		cmd->result = 3;
 		cmd->transfer_flags = cpu_to_le32(0x80000001);
-		cmd->mode = 0x11; // Erase
+		cmd->mode = MODE_ERASE;
 		cmd->transfer_size = 0;
 		cmd->sector_addr = addr;
 		cmd->sector_addr2 = addr;
