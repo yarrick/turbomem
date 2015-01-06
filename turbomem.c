@@ -596,24 +596,71 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	return 0;
 }
 
-static void turbomem_io_work(struct work_struct *work)
+static int turbomem_work_request(struct turbomem_info *turbomem,
+	struct request *req, size_t *transferred_len)
 {
-	struct scatterlist sg[2];
-	struct turbomem_info *turbomem = container_of(work,
-		struct turbomem_info, io_work);
 	struct pci_dev *pci_dev = container_of(turbomem->dev,
 		struct pci_dev, dev);
+	struct scatterlist sg[2];
+	struct transferbuf_handle *xfer = NULL;
+	int sglength;
+	int sectors;
+	int error;
+	int len;
+	int is_write;
+	sector_t lba;
+	enum dma_data_direction dma_dir;
+
+	*transferred_len = 0;
+	if (req->cmd_type != REQ_TYPE_FS)
+		return -EIO;
+
+	/* Block device does not have access to first 768 sectors */
+	lba = blk_rq_pos(req) + RESERERVED_SECTORS;
+	sectors = blk_rq_cur_sectors(req);
+	if ((lba + sectors) > turbomem->flash_sectors)
+		return -EIO;
+	len = sectors * 512;
+	is_write = rq_data_dir(req);
+	if (is_write)
+		dma_dir = DMA_TO_DEVICE;
+	else
+		dma_dir = DMA_FROM_DEVICE;
+	xfer = turbomem_transferbuf_alloc(turbomem);
+	if (!xfer) {
+		return -ENOMEM;
+	}
+
+	sg_init_table(sg, ARRAY_SIZE(sg));
+	sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
+	pci_map_sg(pci_dev, sg, sglength, dma_dir);
+	error = turbomem_do_io(turbomem, lba, sectors, xfer,
+		sg, is_write);
+	if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
+		/* Reading non-written page gives error.
+		   Send back zeroed result instead */
+		void *data = bio_data(req->bio);
+		if (data)
+			memset(data, 0, len);
+		error = 0;
+	}
+	pci_unmap_sg(pci_dev, sg, sglength, dma_dir);
+	if (xfer)
+		turbomem_transferbuf_free(turbomem, xfer);
+	xfer = NULL;
+	*transferred_len = len;
+	return error;
+}
+
+static void turbomem_io_work(struct work_struct *work)
+{
+	struct turbomem_info *turbomem = container_of(work,
+		struct turbomem_info, io_work);
 	struct request *req = NULL;
 
 	while (1) {
-		struct transferbuf_handle *xfer = NULL;
-		int sglength;
-		int sectors;
 		int error;
-		int len;
-		int is_write;
-		sector_t lba;
-		enum dma_data_direction dma_dir;
+		size_t length;
 		spin_lock_bh(&turbomem->queue_lock);
 		if (!req)
 			req = blk_fetch_request(turbomem->request_queue);
@@ -621,44 +668,12 @@ static void turbomem_io_work(struct work_struct *work)
 		if (!req)
 			return;
 
-		/* Block device does not have access to first 768 sectors */
-		lba = blk_rq_pos(req) + RESERERVED_SECTORS;
-		sectors = blk_rq_cur_sectors(req);
-		len = sectors * 512;
-		is_write = rq_data_dir(req);
-		if (is_write)
-			dma_dir = DMA_TO_DEVICE;
-		else
-			dma_dir = DMA_FROM_DEVICE;
-		xfer = turbomem_transferbuf_alloc(turbomem);
-		if (!xfer) {
-			error = -ENOMEM;
-			goto end_req;
-		}
+		error = turbomem_work_request(turbomem, req, &length);
 
-		sg_init_table(sg, ARRAY_SIZE(sg));
-		sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
-		pci_map_sg(pci_dev, sg, sglength, dma_dir);
-		error = turbomem_do_io(turbomem, lba, sectors, xfer,
-			sg, is_write);
-		if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
-			/* Reading non-written page gives error.
-			   Send back zeroed result instead */
-			void *data = bio_data(req->bio);
-			if (data)
-				memset(data, 0, sectors*512);
-			error = 0;
-		}
-		pci_unmap_sg(pci_dev, sg, sglength, dma_dir);
-
-end_req:
 		spin_lock_bh(&turbomem->queue_lock);
-		if (!__blk_end_request(req, error, len))
+		if (!__blk_end_request(req, error, length))
 			req = NULL;
 		spin_unlock_bh(&turbomem->queue_lock);
-		if (xfer)
-			turbomem_transferbuf_free(turbomem, xfer);
-		xfer = NULL;
 	}
 }
 
@@ -668,18 +683,6 @@ static void turbomem_request(struct request_queue *q)
 
 	queue_work(turbomem->io_queue, &turbomem->io_work);
 }
-
-static int turbomem_prepare_req(struct request_queue *q, struct request *req)
-{
-	if (req->cmd_type != REQ_TYPE_FS &&
-			req->cmd_type != REQ_TYPE_BLOCK_PC) {
-		blk_dump_rq_flags(req, "Unsupported request");
-		return BLKPREP_KILL;
-	}
-	req->cmd_flags |= REQ_DONTPREP;
-	return BLKPREP_OK;
-}
-
 
 static int turbomem_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
@@ -707,7 +710,6 @@ static int turbomem_setup_disk(struct turbomem_info *turbomem, int cardid)
 		return -ENOMEM;
 
 	turbomem->request_queue->queuedata = turbomem;
-	blk_queue_prep_rq(turbomem->request_queue, turbomem_prepare_req);
 	turbomem->io_queue = alloc_ordered_workqueue(DRIVER_NAME,
 		WQ_MEM_RECLAIM);
 	INIT_WORK(&turbomem->io_work, turbomem_io_work);
