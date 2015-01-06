@@ -29,7 +29,7 @@
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 16
 #define DISK_MINORS 8
-#define RESERERVED_SECTORS 0x300
+#define RESERVED_SECTORS 0x300
 
 #define STATUS_REGISTER (0x18)
 #define STATUS_INTERRUPT_MASK (0x1F)
@@ -192,7 +192,7 @@ static void turbomem_calc_sectors(struct turbomem_info *turbomem)
 
 	turbomem->flash_sectors = sectors;
 	/* First three 256-sector blocks are reserved */
-	turbomem->usable_flash_sectors = sectors - RESERERVED_SECTORS;
+	turbomem->usable_flash_sectors = sectors - RESERVED_SECTORS;
 }
 
 static irqreturn_t turbomem_isr(int irq, void *dev)
@@ -600,7 +600,7 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 		return -EIO;
 
 	/* Block device does not have access to first 768 sectors */
-	lba = blk_rq_pos(req) + RESERERVED_SECTORS;
+	lba = blk_rq_pos(req) + RESERVED_SECTORS;
 	sectors = blk_rq_cur_sectors(req);
 	if ((lba + sectors) > turbomem->flash_sectors)
 		return -EIO;
