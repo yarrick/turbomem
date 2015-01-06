@@ -585,8 +585,6 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 static int turbomem_work_request(struct turbomem_info *turbomem,
 	struct request *req, size_t *transferred_len)
 {
-	struct pci_dev *pci_dev = container_of(turbomem->dev,
-		struct pci_dev, dev);
 	struct scatterlist sg[2];
 	struct transferbuf_handle *xfer = NULL;
 	int sglength;
@@ -619,7 +617,7 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 
 	sg_init_table(sg, ARRAY_SIZE(sg));
 	sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
-	pci_map_sg(pci_dev, sg, sglength, dma_dir);
+	dma_map_sg(turbomem->dev, sg, sglength, dma_dir);
 	error = turbomem_do_io(turbomem, lba, sectors, xfer,
 		sg->dma_address, is_write);
 	if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
@@ -630,7 +628,7 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 			memset(data, 0, len);
 		error = 0;
 	}
-	pci_unmap_sg(pci_dev, sg, sglength, dma_dir);
+	dma_unmap_sg(turbomem->dev, sg, sglength, dma_dir);
 	if (xfer)
 		turbomem_transferbuf_free(turbomem, xfer);
 	xfer = NULL;
