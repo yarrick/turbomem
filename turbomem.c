@@ -25,7 +25,6 @@
 
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 32
-#define DISK_MINORS 8
 #define RESERVED_SECTORS 0x200
 
 #define STATUS_REGISTER (0x18)
