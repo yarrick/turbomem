@@ -60,8 +60,6 @@ enum xfer_status {
 	XFER_DONE,
 	XFER_FAILED,
 };
-#define RESULT_READ_ERASED_SECTOR (0x8FF2)
-#define RESULT_READ_BAD_ADDRESS   (0x8003)
 
 struct transferbuf_handle {
 	/* Virtual address of struct transfer_command buffer */
@@ -120,6 +118,13 @@ struct transfer_command {
 	u8 reserved8;
 	u16 reserved9;
 } __attribute__((packed));
+
+/* Value from transfer_command->result */
+enum command_result {
+	RESULT_READ_BAD_ADDRESS   = 0x8003,
+	RESULT_ERASE_FAILED       = 0x8004,
+	RESULT_READ_ERASED_SECTOR = 0x8FF2,
+};
 
 struct turbomem_info {
 	struct device *dev;
@@ -293,7 +298,7 @@ static void turbomem_queue_transfer(struct turbomem_info *turbomem,
 {
 	if (transfer == turbomem->idle_transfer) {
 		dev_warn(turbomem->dev,
-			"Blocked attempt to queue the idle transfer");
+			"Blocked attempt to queue the idle transfer\n");
 		WARN_ON(transfer == turbomem->idle_transfer);
 		return;
 	}
@@ -507,53 +512,36 @@ static const struct file_operations debugfs_orom_fops = {
 static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 	const char __user *user_buf, size_t size, loff_t *ppos)
 {
-	int addr;
-	int blocks;
-	int skipped = 0;
+	sector_t lba;
+	int errors;
 	struct turbomem_info *turbomem = file->f_inode->i_private;
 
-	dev_info(turbomem->dev, "Wiping flash!!");
+	dev_info(turbomem->dev, "Wiping flash!");
 
-	addr = 0x1000;
-	blocks = 0;
+	lba = RESERVED_SECTORS;
+	errors = 0;
 	do {
 		struct transferbuf_handle *xfer;
-		struct transfer_command *cmd;
+		int ret;
 
 		xfer = turbomem_transferbuf_alloc(turbomem);
 		if (!xfer)
 			break;
 
-		cmd = xfer->buf;
-		cmd->result = 3;
-		cmd->transfer_flags = cpu_to_le32(0x80000001);
-		cmd->mode = MODE_ERASE;
-		cmd->transfer_size = 0;
-		cmd->sector_addr = addr;
-		cmd->sector_addr2 = addr;
-		cmd->data_buffer_valid = 0;
-
-		turbomem_queue_transfer(turbomem, xfer);
-		turbomem_start_next_transfer(turbomem);
-
-		wait_for_completion_interruptible(&xfer->completion);
-
-		if (xfer->status != XFER_DONE) {
-			skipped++;
-			if (skipped > 100) {
-				turbomem_transferbuf_free(turbomem, xfer);
-				break;
-			}
+		ret = turbomem_do_io(turbomem, lba, 0, xfer, 0, MODE_ERASE);
+		if (ret) {
+			struct transfer_command *cmd = xfer->buf;
+			errors++;
+			dev_err(turbomem->dev,
+				"Erase failed! Sector %08lX, error %08X\n",
+				lba, le32_to_cpu(cmd->result));
 		}
 
 		turbomem_transferbuf_free(turbomem, xfer);
-		addr += 0x200;
-		if ((addr & 0x400) == 0x400)
-			addr += 0x0c00; /* To next eraseable blocks */
-		blocks++;
-	} while (1);
+		lba += 0x100;
+	} while (lba < turbomem->flash_sectors);
 
-	dev_info(turbomem->dev, "Wiped %d blocks.", blocks);
+	dev_info(turbomem->dev, "Erase complete: %d blocks failed.\n", errors);
 	return size;
 }
 
