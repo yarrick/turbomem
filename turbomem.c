@@ -530,18 +530,15 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 
 		ret = turbomem_do_io(turbomem, lba, 0, xfer, 0, MODE_ERASE);
 		if (ret) {
-			struct transfer_command *cmd = xfer->buf;
 			errors++;
-			dev_err(turbomem->dev,
-				"Erase failed! Sector %08lX, error %08X\n",
-				lba, le32_to_cpu(cmd->result));
 		}
 
 		turbomem_transferbuf_free(turbomem, xfer);
 		lba += 0x100;
 	} while (lba < turbomem->flash_sectors);
 
-	dev_info(turbomem->dev, "Erase complete: %d blocks failed.\n", errors);
+	dev_info(turbomem->dev, "Erase complete: %d of %d blocks failed.\n",
+		errors, turbomem->flash_sectors / 256);
 	return size;
 }
 
