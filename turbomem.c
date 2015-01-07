@@ -589,8 +589,6 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 			goto out;
 		}
 	}
-	printk(KERN_INFO "Op %d at lba %08lX %d sectors, busaddr %08lX\n",
-		mode, lba, sectors, busaddr);
 	result = turbomem_do_io(turbomem, lba, sectors, xfer, busaddr, mode);
 	if (busaddr)
 		dma_unmap_single(turbomem->dev, busaddr, sectors * 512, dir);
@@ -643,8 +641,6 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	int sectors = len / 512;
 	int result;
 
-	dev_info(turbomem->dev, "Read from addr %08lX (sector %08lX) len %d\n",
-		from, lba, len);
 	result = turbomem_mtd_exec(turbomem, MODE_READ, lba, sectors, buf);
 	if (result > 0) {
 		*retlen = result;
@@ -661,8 +657,6 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	int sectors = len / 512;
 	int result;
 
-	dev_info(turbomem->dev, "Write to addr %08lX (sector %08lX) len %d\n",
-		to, lba, len);
 	result = turbomem_mtd_exec(turbomem, MODE_WRITE, lba, sectors,
 			(u_char *) buf);
 	if (result > 0) {
