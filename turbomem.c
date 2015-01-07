@@ -29,7 +29,7 @@
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 16
 #define DISK_MINORS 8
-#define RESERVED_SECTORS 0x300
+#define RESERVED_SECTORS 0x200
 
 #define STATUS_REGISTER (0x18)
 #define STATUS_INTERRUPT_MASK (0x1F)
@@ -381,9 +381,9 @@ static void turbomem_tasklet(unsigned long privdata)
 static sector_t turbomem_translate_lba(sector_t lba)
 {
 	/* Every other 4kB area is not used */
-	sector_t lower = 2 * (lba & 0xFF);
+	sector_t lower = 2 * (lba & 0x1FF);
 	/* 256 usable sectors appear at even intervals */
-	sector_t upper = 0x1000 * (lba >> 8);
+	sector_t upper = 0x1000 * (lba >> 9);
 	return upper | lower;
 }
 
