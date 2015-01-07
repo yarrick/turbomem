@@ -586,6 +586,7 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
 			RESERVED_SECTORS + (start * 0x100), 0, NULL);
 		if (result) {
+			instr->state = MTD_ERASE_FAILED;
 			instr->fail_addr = start << mtd->erasesize_shift;
 			return -EIO;
 		}
