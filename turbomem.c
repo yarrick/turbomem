@@ -20,11 +20,7 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/fs.h>
 #include <linux/debugfs.h>
-#include <linux/genhd.h>
-#include <linux/blkdev.h>
-#include <linux/hdreg.h>
 
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 16
@@ -137,18 +133,12 @@ struct turbomem_info {
 	struct transferbuf_handle *curr_transfer;
 	struct transferbuf_handle *idle_transfer;
 	struct tasklet_struct tasklet;
-	struct gendisk *gendisk;
-	spinlock_t queue_lock;
-	struct request_queue *request_queue;
-	struct workqueue_struct *io_queue;
-	struct work_struct io_work;
 	atomic_t irq_statusword;
 	unsigned characteristics;
 	unsigned flash_sectors;
 	unsigned usable_flash_sectors;
 };
 
-static int major_nr;
 static atomic_t cardid_allocator = ATOMIC_INIT(-1);
 static struct dentry *debugfs_root = NULL;
 
@@ -568,153 +558,6 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
-static int turbomem_work_request(struct turbomem_info *turbomem,
-	struct request *req, size_t *transferred_len)
-{
-	struct scatterlist sg[2];
-	struct transferbuf_handle *xfer = NULL;
-	int sglength;
-	int sectors;
-	int error;
-	int len;
-	int is_write;
-	sector_t lba;
-	enum dma_data_direction dma_dir;
-	enum iomode mode;
-
-	*transferred_len = 0;
-	if (req->cmd_type != REQ_TYPE_FS)
-		return -EIO;
-
-	/* Block device does not have access to first 768 sectors */
-	lba = blk_rq_pos(req) + RESERVED_SECTORS;
-	sectors = blk_rq_cur_sectors(req);
-	if ((lba + sectors) > turbomem->flash_sectors)
-		return -EIO;
-	len = sectors * 512;
-	is_write = rq_data_dir(req);
-	if (is_write) {
-		dma_dir = DMA_TO_DEVICE;
-		mode = MODE_WRITE;
-	} else {
-		dma_dir = DMA_FROM_DEVICE;
-		mode = MODE_READ;
-	}
-	xfer = turbomem_transferbuf_alloc(turbomem);
-	if (!xfer) {
-		return -ENOMEM;
-	}
-
-	sg_init_table(sg, ARRAY_SIZE(sg));
-	sglength  = blk_rq_map_sg(turbomem->request_queue, req, sg);
-	dma_map_sg(turbomem->dev, sg, sglength, dma_dir);
-	error = turbomem_do_io(turbomem, lba, sectors, xfer,
-		sg->dma_address, mode);
-	if (xfer->status == XFER_FAILED) {
-		struct transfer_command *cmd = xfer->buf;
-		if (le32_to_cpu(cmd->result) == RESULT_READ_ERASED_SECTOR) {
-			/* Reading erased page gives error.
-			   Send back page full of FF instead */
-			void *data = bio_data(req->bio);
-			if (data)
-				memset(data, 0xFF, len);
-			error = 0;
-		}
-	}
-	dma_unmap_sg(turbomem->dev, sg, sglength, dma_dir);
-	if (xfer)
-		turbomem_transferbuf_free(turbomem, xfer);
-	xfer = NULL;
-	*transferred_len = len;
-	return error;
-}
-
-static void turbomem_io_work(struct work_struct *work)
-{
-	struct turbomem_info *turbomem = container_of(work,
-		struct turbomem_info, io_work);
-	struct request *req = NULL;
-
-	while (1) {
-		int error;
-		size_t length;
-		spin_lock_bh(&turbomem->queue_lock);
-		if (!req)
-			req = blk_fetch_request(turbomem->request_queue);
-		spin_unlock_bh(&turbomem->queue_lock);
-		if (!req)
-			return;
-
-		error = turbomem_work_request(turbomem, req, &length);
-
-		spin_lock_bh(&turbomem->queue_lock);
-		if (!__blk_end_request(req, error, length))
-			req = NULL;
-		spin_unlock_bh(&turbomem->queue_lock);
-	}
-}
-
-static void turbomem_request(struct request_queue *q)
-{
-	struct turbomem_info *turbomem = q->queuedata;
-
-	queue_work(turbomem->io_queue, &turbomem->io_work);
-}
-
-static int turbomem_getgeo(struct block_device *bdev, struct hd_geometry *geo)
-{
-	struct turbomem_info *turbomem = bdev->bd_disk->private_data;
-	/* Usable flash sectors is a multiple of 256,
-	 * so make (heads * sectors) equal to that. */
-	geo->heads 	= 8;
-	geo->sectors	= 32;
-	geo->cylinders	= turbomem->usable_flash_sectors /
-				(geo->heads * geo->sectors);
-	geo->start	= 0;
-	return 0;
-}
-
-static const struct block_device_operations turbomem_disk_ops = {
-	.owner	= THIS_MODULE,
-	.getgeo	= turbomem_getgeo,
-};
-
-static int turbomem_setup_disk(struct turbomem_info *turbomem, int cardid)
-{
-	turbomem->request_queue = blk_init_queue(turbomem_request,
-		&turbomem->queue_lock);
-	if (!turbomem->request_queue)
-		return -ENOMEM;
-
-	turbomem->request_queue->queuedata = turbomem;
-	turbomem->io_queue = alloc_ordered_workqueue(DRIVER_NAME,
-		WQ_MEM_RECLAIM);
-	INIT_WORK(&turbomem->io_work, turbomem_io_work);
-	blk_queue_max_segments(turbomem->request_queue, 1);
-	blk_queue_max_hw_sectors(turbomem->request_queue, 8);
-	blk_queue_logical_block_size(turbomem->request_queue, 512);
-	blk_queue_physical_block_size(turbomem->request_queue, 512);
-	blk_queue_bounce_limit(turbomem->request_queue, DMA_BIT_MASK(32));
-	/* Keep requests within same 4k-block */
-	blk_queue_segment_boundary(turbomem->request_queue, 0xfff);
-
-	turbomem->gendisk = alloc_disk(DISK_MINORS);
-	if (!turbomem->gendisk) {
-		blk_cleanup_queue(turbomem->request_queue);
-		return -ENOMEM;
-	}
-
-	strncpy(turbomem->gendisk->disk_name, turbomem->name, NAME_SIZE);
-	turbomem->gendisk->major = major_nr;
-	turbomem->gendisk->first_minor = cardid * DISK_MINORS;
-	turbomem->gendisk->private_data = turbomem;
-	turbomem->gendisk->queue = turbomem->request_queue;
-	turbomem->gendisk->fops = &turbomem_disk_ops;
-	set_capacity(turbomem->gendisk, turbomem->usable_flash_sectors);
-	add_disk(turbomem->gendisk);
-	return 0;
-}
-
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
@@ -795,10 +638,6 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	cardid = atomic_inc_return(&cardid_allocator);
 	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c", cardid + 'a');
 
-	ret = turbomem_setup_disk(turbomem, cardid);
-	if (ret)
-		goto fail_idle_transfer;
-
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 11);
 
@@ -806,8 +645,6 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	return 0;
 
-fail_idle_transfer:
-	turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 fail_dmapool_cmd:
 	dma_pool_destroy(turbomem->dmapool_cmd);
 fail_irq:
@@ -829,8 +666,6 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
-	del_gendisk(turbomem->gendisk);
-	blk_cleanup_queue(turbomem->request_queue);
 	if (turbomem->idle_transfer)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_cmd);
@@ -877,27 +712,18 @@ static int __init turbomem_init(void)
 
 	turbomem_debugfs_init();
 
-	retval = major_nr = register_blkdev(0, DRIVER_NAME);
-	if (retval < 0)
-		goto fail_debugfs;
-
 	retval = pci_register_driver(&pci_driver);
-	if (retval)
-		goto fail_blkdev;
+	if (retval < 0) {
+		turbomem_debugfs_cleanup();
+		return retval;
+	}
 
 	return 0;
-
-fail_blkdev:
-	unregister_blkdev(major_nr, DRIVER_NAME);
-fail_debugfs:
-	turbomem_debugfs_cleanup();
-	return retval;
 }
 
 static void __exit turbomem_exit(void)
 {
 	pci_unregister_driver(&pci_driver);
-	unregister_blkdev(major_nr, DRIVER_NAME);
 	turbomem_debugfs_cleanup();
 }
 
