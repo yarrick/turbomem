@@ -381,13 +381,13 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	lba = turbomem_translate_lba(lba);
 
 	cmd = xfer->buf;
-	cmd->result = 3;
+	cmd->result = cpu_to_le32(3);
 	cmd->transfer_flags = cpu_to_le32(0x80000001);
 	cmd->mode = mode;
-	cmd->transfer_size = sectors;
-	cmd->sector_addr = lba;
+	cmd->transfer_size = cpu_to_le32(sectors);
+	cmd->sector_addr = cpu_to_le32(lba);
 	if (mode != MODE_READ)
-		cmd->sector_addr2 = lba;
+		cmd->sector_addr2 = cpu_to_le32(lba);
 	cmd->data_buffer = cpu_to_le64(busaddr);
 	if (busaddr)
 		cmd->data_buffer_valid = 1;
@@ -564,6 +564,7 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 {
 	struct transferbuf_handle *xfer;
 	int result;
+	int length;
 	dma_addr_t busaddr = 0;
 	enum dma_data_direction dir = DMA_NONE;
 
@@ -571,6 +572,7 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 	/* Stay within one 4k-block */
 	if (sectors > 8)
 		sectors = 8;
+	length = sectors * 512;
 
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
@@ -582,8 +584,7 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 		else
 			dir = DMA_FROM_DEVICE;
 
-		busaddr = dma_map_single(turbomem->dev, buf, sectors * 512,
-				dir);
+		busaddr = dma_map_single(turbomem->dev, buf, length, dir);
 		if (!busaddr) {
 			result = -ENOMEM;
 			goto out;
@@ -591,19 +592,19 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 	}
 	result = turbomem_do_io(turbomem, lba, sectors, xfer, busaddr, mode);
 	if (busaddr)
-		dma_unmap_single(turbomem->dev, busaddr, sectors * 512, dir);
+		dma_unmap_single(turbomem->dev, busaddr, length, dir);
 
 	if (result) {
 		struct transfer_command *cmd = xfer->buf;
 		if (mode == MODE_READ && le32_to_cpu(cmd->result) ==
 						RESULT_READ_ERASED_SECTOR) {
 			/* Make up erased sector */
-			memset(buf, 0xFF, sectors * 512);
-			result = sectors * 512;
+			memset(buf, 0xFF, length);
+			result = length;
 		}
 	} else {
 		/* Return transferred sectors */
-		result = sectors * 512;
+		result = length;
 	}
 out:
 	turbomem_transferbuf_free(turbomem, xfer);
