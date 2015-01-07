@@ -559,9 +559,43 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
+static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
+	sector_t lba, int sectors, void *buf)
+{
+	struct transferbuf_handle *xfer;
+	int result;
+	dma_addr_t busaddr = 0;
+
+	xfer = turbomem_transferbuf_alloc(turbomem);
+	if (!xfer)
+		return -ENOMEM;
+
+	result = turbomem_do_io(turbomem, lba, sectors, xfer, busaddr, mode);
+
+	turbomem_transferbuf_free(turbomem, xfer);
+	return result;
+}
+
 static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
-	return -EIO;
+	struct turbomem_info *turbomem = mtd->priv;
+	int result;
+	u64 start = instr->addr >> mtd->erasesize_shift;
+	u64 end = (instr->addr + instr->len - 1) >> mtd->erasesize_shift;
+
+	while (start <= end) {
+		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
+			RESERVED_SECTORS + (start * 0x100), 0, NULL);
+		if (result) {
+			instr->fail_addr = start << mtd->erasesize_shift;
+			return -EIO;
+		}
+		start++;
+	}
+
+	instr->state = MTD_ERASE_DONE;
+	mtd_erase_callback(instr);
+	return 0;
 }
 
 static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
