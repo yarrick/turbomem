@@ -58,9 +58,10 @@ enum iomode {
 enum xfer_status {
 	XFER_QUEUED = 0,
 	XFER_DONE,
-	XFER_BAD_OR_ERASED_BANK,
 	XFER_FAILED,
 };
+#define RESULT_READ_ERASED_SECTOR (0x8FF2)
+#define RESULT_READ_BAD_ADDRESS   (0x8003)
 
 struct transferbuf_handle {
 	/* Virtual address of struct transfer_command buffer */
@@ -353,22 +354,12 @@ static void turbomem_tasklet(unsigned long privdata)
 
 	spin_lock_bh(&turbomem->lock);
 	if (turbomem->curr_transfer) {
-		if (status == 1) {
+		if (status == 1)
 			/* Transfer completed */
 			turbomem->curr_transfer->status = XFER_DONE;
-		} else if (status == 2) {
-			/* Transfer stopped, bad or erased sector */
-			turbomem->curr_transfer->status =
-						XFER_BAD_OR_ERASED_BANK;
-		} else {
-			/* Other error */
-			struct transfer_command *cmd =
-				turbomem->curr_transfer->buf;
-			dev_info(turbomem->dev,
-				"Transfer at addr %08X returned error %08X",
-				le32_to_cpu(cmd->sector_addr), status);
+		else
+			/* Transfer failed */
 			turbomem->curr_transfer->status = XFER_FAILED;
-		}
 		complete_all(&turbomem->curr_transfer->completion);
 		turbomem->curr_transfer = NULL;
 	}
@@ -492,8 +483,8 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 
 	retval = turbomem_do_io(turbomem, addr, 4096/512, xfer, bus4k,
 			MODE_READ);
-	if (xfer->status != XFER_DONE) {
-		/* Got error on transfer, end of OROM */
+	if (xfer->status == XFER_FAILED) {
+		/* Found erased page, end of OROM */
 		retval = 0;
 		goto out;
 	}
@@ -634,13 +625,16 @@ static int turbomem_work_request(struct turbomem_info *turbomem,
 	dma_map_sg(turbomem->dev, sg, sglength, dma_dir);
 	error = turbomem_do_io(turbomem, lba, sectors, xfer,
 		sg->dma_address, mode);
-	if (!is_write && xfer->status == XFER_BAD_OR_ERASED_BANK) {
-		/* Reading non-written page gives error.
-		   Send back zeroed result instead */
-		void *data = bio_data(req->bio);
-		if (data)
-			memset(data, 0, len);
-		error = 0;
+	if (xfer->status == XFER_FAILED) {
+		struct transfer_command *cmd = xfer->buf;
+		if (le32_to_cpu(cmd->result) == RESULT_READ_ERASED_SECTOR) {
+			/* Reading erased page gives error.
+			   Send back page full of FF instead */
+			void *data = bio_data(req->bio);
+			if (data)
+				memset(data, 0xFF, len);
+			error = 0;
+		}
 	}
 	dma_unmap_sg(turbomem->dev, sg, sglength, dma_dir);
 	if (xfer)
