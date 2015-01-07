@@ -572,7 +572,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	ret = pci_enable_device(dev);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to request memory region\n");
-		goto fail_enable;
+		goto fail_have_struct;
 	}
 
 	pci_set_drvdata(dev, turbomem);
@@ -582,26 +582,26 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	ret = pci_request_regions(dev, DRIVER_NAME);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to request memory region\n");
-		goto fail_req_region;
+		goto fail_enabled;
 	}
 
 	turbomem->mem = ioremap_nocache(pci_resource_start(dev, 0),
 				pci_resource_len(dev, 0));
 	if (!turbomem->mem) {
 		dev_err(&dev->dev, "Unable to remap memory area\n");
-		goto fail_ioremap;
+		goto fail_have_regions;
 	}
 
 	ret = dma_set_mask(turbomem->dev, DMA_BIT_MASK(32));
 	if (ret) {
 		dev_err(&dev->dev, "No usable DMA configuration\n");
-		goto fail_init;
+		goto fail_have_iomap;
 	}
 
 	ret = turbomem_hw_init(turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to initialize device\n");
-		goto fail_init;
+		goto fail_have_iomap;
 	}
 
 	tasklet_init(&turbomem->tasklet, turbomem_tasklet,
@@ -611,7 +611,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			DRIVER_NAME, turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to request IRQ\n");
-		goto fail_init;
+		goto fail_have_iomap;
 	}
 
 	turbomem->dmapool_cmd = dma_pool_create(DRIVER_NAME "_cmd", &dev->dev,
@@ -619,13 +619,13 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	if (!turbomem->dmapool_cmd) {
 		dev_err(&dev->dev, "Unable to create DMA pool for commands\n");
 		ret = -ENOMEM;
-		goto fail_irq;
+		goto fail_have_irq;
 	}
 
 	turbomem->idle_transfer = turbomem_transferbuf_alloc(turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to allocate idle transfer job\n");
-		goto fail_dmapool_cmd;
+		goto fail_have_dmapool;
 	}
 	turbomem_start_idle_transfer(turbomem);
 
@@ -642,18 +642,18 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	return 0;
 
-fail_dmapool_cmd:
+fail_have_dmapool:
 	dma_pool_destroy(turbomem->dmapool_cmd);
-fail_irq:
+fail_have_irq:
 	free_irq(dev->irq, turbomem);
 	tasklet_kill(&turbomem->tasklet);
-fail_init:
+fail_have_iomap:
 	iounmap(turbomem->mem);
-fail_ioremap:
+fail_have_regions:
 	pci_release_regions(dev);
-fail_req_region:
+fail_enabled:
 	pci_disable_device(dev);
-fail_enable:
+fail_have_struct:
 	kfree(turbomem);
 	return ret;
 }
