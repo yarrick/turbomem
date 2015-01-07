@@ -21,6 +21,7 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/debugfs.h>
+#include <linux/mtd/mtd.h>
 
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 32
@@ -125,6 +126,7 @@ enum command_result {
 struct turbomem_info {
 	struct device *dev;
 	struct dentry *debugfs_dir;
+	struct mtd_info mtd;
 	char name[NAME_SIZE];
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
@@ -557,6 +559,44 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 	debugfs_remove_recursive(turbomem->debugfs_dir);
 }
 
+static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
+{
+	return -EIO;
+}
+
+static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
+                      size_t *retlen, u_char *buf)
+{
+	return -EIO;
+}
+
+static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
+                      size_t *retlen, const u_char *buf)
+{
+	return -EIO;
+}
+
+static int turbomem_setup_mtd(struct turbomem_info *turbomem)
+{
+	struct mtd_info *mtd = &turbomem->mtd;
+	mtd->type = MTD_NANDFLASH;
+	mtd->flags = MTD_CAP_NANDFLASH;
+	mtd->size = turbomem->usable_flash_sectors * 512;
+	mtd->erasesize = 256*1024;
+	mtd->writesize = 512;
+	mtd->writebufsize = 4096;
+
+	mtd->_erase = turbomem_mtd_erase;
+	mtd->_read = turbomem_mtd_read;
+	mtd->_write = turbomem_mtd_write;
+
+	mtd->owner = THIS_MODULE;
+	mtd->name = turbomem->name;
+	mtd->priv = turbomem;
+
+	return mtd_device_register(mtd, NULL, 0);
+}
+
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
@@ -638,10 +678,19 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 11);
 
+	ret = turbomem_setup_mtd(turbomem);
+	if (ret) {
+		dev_err(&dev->dev, "Unable to register to MTD layer\n");
+		goto fail_have_idle_transfer;
+	}
+
 	turbomem_debugfs_dev_add(turbomem);
 
 	return 0;
 
+fail_have_idle_transfer:
+	if (turbomem->idle_transfer)
+		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 fail_have_dmapool:
 	dma_pool_destroy(turbomem->dmapool_cmd);
 fail_have_irq:
@@ -663,6 +712,7 @@ static void turbomem_remove(struct pci_dev *dev)
 	struct turbomem_info *turbomem = pci_get_drvdata(dev);
 
 	turbomem_debugfs_dev_remove(turbomem);
+	mtd_device_unregister(&turbomem->mtd);
 	if (turbomem->idle_transfer)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_cmd);
