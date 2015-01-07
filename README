@@ -33,11 +33,11 @@ Enjoy,
 
 Debugfs interface:
 
-* /turbomem/turbomemX/orom (read)
+* /turbomem/<pci-addr>/orom (read)
   Dump the embedded disk-filtering Option ROM
   Example:
 
-# hexdump -C /sys/kernel/debug/turbomem/turbomema/orom
+# hexdump -C /sys/kernel/debug/turbomem/0000:04:00.0/orom
 00000000  55 aa 18 e9 2a 29 3f 3f  3f 3f 3f 3f 3f 3f 3f 3f  |U...*)??????????|
 00000010  3f 3f 3f 3f 3f 3f 3f b9  70 00 20 00 00 00 00 00  |???????.p. .....|
 00000020  24 50 6e 50 01 02 00 00  00 d6 00 00 00 00 40 00  |$PnP..........@.|
@@ -51,11 +51,11 @@ Debugfs interface:
 .... and so on.
 
 
-* /turbomem/turbomemX/wipe_flash (write)
+* /turbomem/<pci-addr>/wipe_flash (write)
   Write anything here to erase the flash memory. Watch out.
   Example:
 
-# echo 1 > /sys/kernel/debug/turbomem/turbomema/wipe_flash
+# echo 1 > /sys/kernel/debug/turbomem/0000:04:00.0/wipe_flash
 turbomem 0000:04:00.0: Wiping flash!
-turbomem 0000:04:00.0: Erase complete: 102 blocks failed.
+turbomem 0000:04:00.0: Erase complete: 102 of 16384 blocks failed.
 

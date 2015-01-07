@@ -23,7 +23,7 @@
 #include <linux/debugfs.h>
 
 #define DRIVER_NAME "turbomem"
-#define NAME_SIZE 16
+#define NAME_SIZE 32
 #define DISK_MINORS 8
 #define RESERVED_SECTORS 0x200
 
@@ -139,7 +139,6 @@ struct turbomem_info {
 	unsigned usable_flash_sectors;
 };
 
-static atomic_t cardid_allocator = ATOMIC_INIT(-1);
 static struct dentry *debugfs_root = NULL;
 
 static u32 readle32(struct turbomem_info *turbomem, u32 offset)
@@ -540,7 +539,7 @@ static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
 {
 	if (IS_ERR_OR_NULL(debugfs_root))
 		return;
-	turbomem->debugfs_dir = debugfs_create_dir(turbomem->name,
+	turbomem->debugfs_dir = debugfs_create_dir(dev_name(turbomem->dev),
 		debugfs_root);
 
 	if (IS_ERR_OR_NULL(turbomem->debugfs_dir))
@@ -561,7 +560,6 @@ static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)
 static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret;
-	int cardid;
 	struct turbomem_info *turbomem;
 
 	dev_info(&dev->dev, "Found Intel Turbo Memory Controller (rev %02X)\n",
@@ -634,9 +632,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	spin_lock_init(&turbomem->lock);
 	INIT_LIST_HEAD(&turbomem->transfer_queue);
 
-	/* Generate unique card name */
-	cardid = atomic_inc_return(&cardid_allocator);
-	snprintf(turbomem->name, NAME_SIZE - 1, DRIVER_NAME "%c", cardid + 'a');
+	snprintf(turbomem->name, NAME_SIZE - 1, "TurboMemory@%s",
+		dev_name(turbomem->dev));
 
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 11);
