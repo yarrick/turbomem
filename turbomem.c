@@ -40,7 +40,8 @@
 
 /*
  * There are also other modes:
- * Some kind of read:  2 3
+ * Some kind of read:  2 3 (mode 3 maybe better at reading sectors
+ * 	written to multiple times?)
  * Some kind of write: 5 6
  * Unknown: 0x31 +more?
  */
@@ -119,6 +120,8 @@ struct transfer_command {
 enum command_result {
 	RESULT_READ_BAD_ADDRESS   = 0x8003,
 	RESULT_ERASE_FAILED       = 0x8004,
+	RESULT_READ_FAILED        = 0x8012, /* Returned after reading a sector
+		that has been written twice after erase */
 	RESULT_READ_ERASED_SECTOR = 0x8FF2,
 };
 
@@ -368,7 +371,7 @@ static sector_t turbomem_translate_lba(sector_t lba)
 {
 	/* Every other 4kB area is not used */
 	sector_t lower = 2 * (lba & 0x1FF);
-	/* 256 usable sectors appear at even intervals */
+	/* 512 usable sectors appear at even intervals */
 	sector_t upper = 0x1000 * (lba >> 9);
 	return upper | lower;
 }
@@ -389,8 +392,7 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	if (mode != MODE_READ)
 		cmd->sector_addr2 = cpu_to_le32(lba);
 	cmd->data_buffer = cpu_to_le64(busaddr);
-	if (busaddr)
-		cmd->data_buffer_valid = 1;
+	cmd->data_buffer_valid = 1;
 
 	turbomem_queue_transfer(turbomem, xfer);
 	turbomem_start_next_transfer(turbomem);
@@ -569,11 +571,7 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 	enum dma_data_direction dir = DMA_NONE;
 
 	lba += RESERVED_SECTORS;
-	/* Stay within one 4k-block */
-	if (sectors > 8)
-		sectors = 8;
 	length = sectors * 512;
-
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
 		return -ENOMEM;
@@ -596,15 +594,14 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 
 	if (result) {
 		struct transfer_command *cmd = xfer->buf;
+		dev_warn(turbomem->dev, "Error result %d (lba %08lX op %d)\n",
+			le32_to_cpu(cmd->result), lba, mode);
 		if (mode == MODE_READ && le32_to_cpu(cmd->result) ==
 						RESULT_READ_ERASED_SECTOR) {
 			/* Make up erased sector */
 			memset(buf, 0xFF, length);
-			result = length;
+			result = 0;
 		}
-	} else {
-		/* Return transferred sectors */
-		result = length;
 	}
 out:
 	turbomem_transferbuf_free(turbomem, xfer);
@@ -620,8 +617,8 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 
 	while (start <= end) {
 		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
-			start * 0x100, 0, NULL);
-		if (result < 0) {
+			(start * 0x100), 0, NULL);
+		if (result) {
 			instr->state = MTD_ERASE_FAILED;
 			instr->fail_addr = start << mtd->erasesize_shift;
 			return result;
@@ -638,33 +635,34 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
                       size_t *retlen, u_char *buf)
 {
 	struct turbomem_info *turbomem = mtd->priv;
+	int result;
 	sector_t lba = from / 512;
 	int sectors = len / 512;
-	int result;
-
-	result = turbomem_mtd_exec(turbomem, MODE_READ, lba, sectors, buf);
-	if (result > 0) {
-		*retlen = result;
-		return 0;
-	}
-	return result;
+	if (sectors > 8)
+		sectors = 8;
+	result = turbomem_mtd_exec(turbomem, MODE_READ,
+			lba, sectors, buf);
+	if (result)
+		return result;
+	*retlen = sectors * 512;
+	return 0;
 }
 
 static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
                       size_t *retlen, const u_char *buf)
 {
 	struct turbomem_info *turbomem = mtd->priv;
+	int result;
 	sector_t lba = to / 512;
 	int sectors = len / 512;
-	int result;
-
-	result = turbomem_mtd_exec(turbomem, MODE_WRITE, lba, sectors,
-			(u_char *) buf);
-	if (result > 0) {
-		*retlen = result;
-		return 0;
-	}
-	return result;
+	if (sectors > 8)
+		sectors = 8;
+	result = turbomem_mtd_exec(turbomem, MODE_WRITE,
+			lba, sectors, (u_char *) buf);
+	if (result)
+		return result;
+	*retlen = sectors * 512;
+	return 0;
 }
 
 static int turbomem_setup_mtd(struct turbomem_info *turbomem)
