@@ -31,6 +31,48 @@ Enjoy,
 
 ================================================================================
 
+Current status:
+Erasing, writing and reading works.
+However, an error is returned when trying to read a sector that has been
+written twice since erased.
+
+Example session:
+
+# modprobe mtd
+# insmod turbomem.ko
+# cat /proc/mtd
+dev:    size   erasesize  name
+mtd0: 7ffc0000 00040000 "TurboMemory@0000:04:00.0"
+# flash_erase  /dev/mtd0 0 10
+Erasing 256 Kibyte @ 240000 -- 100 % complete
+# nanddump /dev/mtd0 -l 8192 |hexdump -C
+ECC failed: 0
+ECC corrected: 0
+Number of bad blocks: 0
+Number of bbt blocks: 0
+Block size 262144, page size 4096, OOB size 0
+Dumping data starting at 0x00000000 and ending at 0x00002000...
+00000000  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+*
+00002000
+# echo "faaaaao foo foo 22"|nandwrite -p  /dev/mtd0
+Writing data to block 0 at offset 0x0
+# nanddump /dev/mtd0 -l 8192 |hexdump -C
+ECC failed: 0
+ECC corrected: 0
+Number of bad blocks: 0
+Number of bbt blocks: 0
+Block size 262144, page size 4096, OOB size 0
+Dumping data starting at 0x00000000 and ending at 0x00002000...
+00000000  66 61 61 61 61 61 6f 20  66 6f 6f 20 66 6f 6f 20  |faaaaao foo foo |
+00000010  32 32 0a ff ff ff ff ff  ff ff ff ff ff ff ff ff  |22..............|
+00000020  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+*
+00002000
+#
+
+================================================================================
+
 Debugfs interface:
 
 * /turbomem/<pci-addr>/orom (read)
