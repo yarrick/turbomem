@@ -44,7 +44,7 @@ Example session:
 dev:    size   erasesize  name
 mtd0: 7ffc0000 00040000 "TurboMemory@0000:04:00.0"
 # flash_erase  /dev/mtd0 0 10
-Erasing 256 Kibyte @ 240000 -- 100 % complete
+Erasing 128 Kibyte @ 120000 -- 100 % complete
 # nanddump /dev/mtd0 -l 8192 |hexdump -C
 ECC failed: 0
 ECC corrected: 0

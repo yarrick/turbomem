@@ -713,7 +713,7 @@ static int turbomem_setup_mtd(struct turbomem_info *turbomem)
 	mtd->type = MTD_NANDFLASH;
 	mtd->flags = MTD_CAP_NANDFLASH;
 	mtd->size = turbomem->usable_flash_sectors * 512;
-	mtd->erasesize = 256*1024;
+	mtd->erasesize = 256*512;
 	mtd->writesize = 4096;
 	mtd->writebufsize = 4096;
 
