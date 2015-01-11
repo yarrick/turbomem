@@ -906,7 +906,7 @@ static void __exit turbomem_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Intel(R) Turbo Memory PCIe flash block device driver");
+MODULE_DESCRIPTION("Intel(R) Turbo Memory Controller NAND flash driver");
 MODULE_AUTHOR("Erik Ekman <erik@kryo.se>");
 
 module_init(turbomem_init);
