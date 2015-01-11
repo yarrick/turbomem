@@ -14,6 +14,48 @@
  *
  */
 
+/*
+
+Observed flash layout of Turbo Memory 2GB board:
+
+It is addressed by 512 byte sectors. 4kB of flash is available
+every 8kB. After 512 sectors (256kB), next available sector
+starts at next even 0x1000 address.
+
+Read can be done on individual sectors. Writes have to be done using
+a full 4kB block. Erase is done per 256 sectors.
+
+Example:
+00000000-00000007 = 4kB
+00000010-00000017 = 4kB
+00000020-00000027 = 4kB
+00000030-00000037 = 4kB
+...
+000003D0-000003D7 = 4kB
+000003E0-000003E7 = 4kB
+000003F0-000003F7 = 4kB
+
+00001000-00001007 = 4kB
+00001010-00001017 = 4kB
+...
+000013E0-000013E7 = 4kB
+000013F0-000013F7 = 4kB
+
+00002000-00002007 = 4kB
+00002010-00002017 = 4kB
+...
+000023E0-000023E7 = 4kB
+000023F0-000023F7 = 4kB
+and so on.
+
+Erase can be done at address 0x0, 0x200, 0x1000, 0x1200, 0x2000, 0x2200,
+0x3000, 0x3200 and so on.
+
+The first 256kB contain serial number, option ROM and other data and is kept
+as reserved. There is probably no problem in using it as normal flash though.
+
+*/
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
