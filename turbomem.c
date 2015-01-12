@@ -112,33 +112,58 @@ struct transferbuf_handle {
 	struct completion completion;
 };
 
+/*
+ * This struct is given to the device to initiate a transfer.
+ * The bus address of it is written to the 64bit register at offset 0.
+ * Set the lowest bit in register 0x10 to start the transfer.
+ * A NOP command is usually put at the end of each chain, but this
+ * is not required.
+ */
 struct transfer_command {
 	/* Offset 0000 */
+	/* 3 written here initially. After transfer an errorcode will be
+	 * written */
 	__le32 result;
 	/* Offset 0004 */
+	/* Flags. Highest bit and lowest bit normally used. Highest bit
+	 * means not executed? */
 	__le32 transfer_flags;
 	/* Offset 0008 */
+	/* Bus address of next struct transfer_command buffer. Zero if last. */
 	__le64 next_command;
 	/* Offset 0010 */
+	/* Type of operation. Read, write, erase etc. */
 	u8 mode;
+	/* Number of 512b sectors to transfer. For reading: 1-8, writing: 8.
+	 * Set to zero when erasing */
 	u8 transfer_size;
 	u16 reserved1;
 	/* Offset 0014 */
+	/* Sector to start transfer/erase at. */
 	__le32 sector_addr;
 	/* Offset 0018 */
+	/* Write same sector here as 'sector_addr' for writing/erasing. */
 	__le32 sector_addr2;
 	/* Offset 001C */
+	/* Bus address of databuffer. Used for reads/writes. */
 	__le64 data_buffer;
 	u64 reserved2;
 	/* Offset 002C */
+	/* Bus address of metadata buffer. Unknown contents/size */
 	__le64 metadata_buffer;
 	/* Offset 0034 */
+	/* Set to 1 if this is first transfer in the chain */
 	u8 first_transfer;
+	/* Set to 1 if this is last transfer in the chain */
 	u8 last_transfer;
+	/* Set to 1 if data buffer address at offset 001C above is valid */
 	u8 data_buffer_valid;
+	/* Set to 1 if metadata buffer address at offset 002C above is valid */
 	u8 metadata_buffer_valid;
 	u64 reserved3;
 	/* Offset 0040 */
+	/* The windows driver uses this field to link the transfer command
+	 * structs. Addresses are virtual, not used by hardware. */
 	u64 virtual_ptr1;
 	u32 reserved4;
 	/* Offset 004C */
