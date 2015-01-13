@@ -705,15 +705,20 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 {
 	struct turbomem_info *turbomem = mtd->priv;
 	int result;
-	sector_t lba = from / 512;
-	int sectors = len / 512;
-	if (sectors > 8)
-		sectors = 8;
+	/* Round to even 4kB block */
+	loff_t offset = from & 0xfff;
+	sector_t lba = (from / 512) & 0xFFFFFFF8;
+	/* Read from flash */
 	result = turbomem_mtd_exec(turbomem, MODE_READ,
-			lba, sectors, buf);
+			lba, 8, buf);
 	if (result)
 		return result;
-	*retlen = sectors * 512;
+	/* Move data in case of partial read */
+	if (len > 4096 - offset)
+		len = 4096 - offset;
+	if (offset)
+		memmove(buf, buf + offset, len);
+	*retlen = len;
 	return 0;
 }
 
