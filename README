@@ -42,7 +42,7 @@ Example session:
 # insmod turbomem.ko
 # cat /proc/mtd
 dev:    size   erasesize  name
-mtd0: 7ffc0000 00040000 "TurboMemory@0000:04:00.0"
+mtd0: 7ffc0000 00020000 "TurboMemory@0000:04:00.0"
 # flash_erase  /dev/mtd0 0 10
 Erasing 128 Kibyte @ 120000 -- 100 % complete
 # nanddump /dev/mtd0 -l 8192 |hexdump -C
@@ -69,6 +69,27 @@ Dumping data starting at 0x00000000 and ending at 0x00002000...
 00000020  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
 *
 00002000
+# nandtest -l 0x10000000 /dev/mtd0
+ECC corrections: 0
+ECC failures   : 0
+Bad blocks     : 0
+BBT blocks     : 0
+03cc0000: erasing... MEMERASE: Input/output error
+03ce0000: erasing... MEMERASE: Input/output error
+04bc0000: erasing... MEMERASE: Input/output error
+04be0000: erasing... MEMERASE: Input/output error
+064c0000: erasing... MEMERASE: Input/output error
+064e0000: erasing... MEMERASE: Input/output error
+07240000: erasing... MEMERASE: Input/output error
+07260000: erasing... MEMERASE: Input/output error
+0cec0000: erasing... MEMERASE: Input/output error
+0cee0000: erasing... MEMERASE: Input/output error
+0cf40000: erasing... MEMERASE: Input/output error
+0cf60000: erasing... MEMERASE: Input/output error
+0d040000: erasing... MEMERASE: Input/output error
+0d060000: erasing... MEMERASE: Input/output error
+0ffe0000: checking...
+Finished pass 1 successfully
 #
 
 ================================================================================
