@@ -661,13 +661,15 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 
 	if (result) {
 		struct transfer_command *cmd = xfer->buf;
-		dev_warn(turbomem->dev, "Error result %d (lba %08lX op %d)\n",
-			le32_to_cpu(cmd->result), lba, mode);
 		if (mode == MODE_READ && le32_to_cpu(cmd->result) ==
 						RESULT_READ_ERASED_SECTOR) {
 			/* Make up erased sector */
 			memset(buf, 0xFF, length);
 			result = 0;
+		} else {
+			dev_warn(turbomem->dev,
+				"IO error: result %08X (lba %08lX op %d)\n",
+				le32_to_cpu(cmd->result), lba, mode);
 		}
 	}
 out:
