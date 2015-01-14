@@ -757,6 +757,12 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	return 0;
 }
 
+static int turbomem_mtd_block_markbad(struct mtd_info *mtd, loff_t ofs)
+{
+	/* No-op implementation */
+	return 0;
+}
+
 static int turbomem_setup_mtd(struct turbomem_info *turbomem)
 {
 	struct mtd_info *mtd = &turbomem->mtd;
@@ -770,6 +776,8 @@ static int turbomem_setup_mtd(struct turbomem_info *turbomem)
 	mtd->_erase = turbomem_mtd_erase;
 	mtd->_read = turbomem_mtd_read;
 	mtd->_write = turbomem_mtd_write;
+
+	mtd->_block_markbad = turbomem_mtd_block_markbad;
 
 	mtd->owner = THIS_MODULE;
 	mtd->name = turbomem->name;
