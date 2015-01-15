@@ -190,10 +190,13 @@ struct transfer_command {
 
 /* Value from transfer_command->result */
 enum command_result {
-	RESULT_READ_BAD_ADDRESS   = 0x8003,
-	RESULT_ERASE_FAILED       = 0x8004,
-	RESULT_READ_FAILED        = 0x8012, /* Returned after reading a sector
-		that has been written twice after erase */
+	/* When doing IO to nonexisting address */
+	RESULT_BAD_ADDRESS        = 0x8003,
+	/* When writing/erasing bad block */
+	RESULT_BAD_BLOCK          = 0x8004,
+	/* When reading sector written more than once */
+	RESULT_READ_FAILED        = 0x8012,
+	/* When reading erased sector */
 	RESULT_READ_ERASED_SECTOR = 0x8FF2,
 };
 
