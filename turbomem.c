@@ -215,6 +215,15 @@ struct turbomem_info {
 	unsigned usable_flash_sectors;
 };
 
+/* Addressable unit */
+#define NAND_SECTOR_SIZE 512
+/* Unit for reads/writes */
+#define NAND_PAGE_SIZE (8*(NAND_SECTOR_SIZE))
+/* Unit for erasing */
+#define NAND_BLOCK_SIZE (256*(NAND_SECTOR_SIZE))
+
+#define NUM_SECTORS(x) ((x)/(NAND_SECTOR_SIZE))
+
 static struct dentry *debugfs_root = NULL;
 
 static u32 readle32(struct turbomem_info *turbomem, u32 offset)
@@ -538,21 +547,22 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	u8 *buf4k;
 	loff_t offset_backup;
 	ssize_t retval;
-	sector_t addr = 0x10 + (*ppos / 512);
+	sector_t addr = 0x10 + NUM_SECTORS(*ppos);
 
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
 		return -ENOMEM;
 
-	buf4k = dma_alloc_coherent(turbomem->dev, 4096, &bus4k, GFP_KERNEL);
+	buf4k = dma_alloc_coherent(turbomem->dev, NAND_PAGE_SIZE, &bus4k,
+			GFP_KERNEL);
 	if (!buf4k) {
 		turbomem_transferbuf_free(turbomem, xfer);
 		return -ENOMEM;
 	}
-	memset(buf4k, 0, 4096);
+	memset(buf4k, 0, NAND_PAGE_SIZE);
 
-	retval = turbomem_do_io(turbomem, addr, 4096/512, xfer, bus4k,
-			MODE_READ);
+	retval = turbomem_do_io(turbomem, addr, NUM_SECTORS(NAND_PAGE_SIZE),
+			xfer, bus4k, MODE_READ);
 	if (xfer->status == XFER_FAILED) {
 		/* Found erased page, end of OROM */
 		retval = 0;
@@ -562,10 +572,10 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	offset_backup = *ppos & 0xFFFF000;
 	*ppos &= 0xFFF; /* Read within 4k-buf */
 	retval = simple_read_from_buffer(userbuf, count, ppos,
-		buf4k, 4096);
+		buf4k, NAND_PAGE_SIZE);
 	*ppos += offset_backup;
 out:
-	dma_free_coherent(turbomem->dev, 4096, buf4k, bus4k);
+	dma_free_coherent(turbomem->dev, NAND_PAGE_SIZE, buf4k, bus4k);
 	turbomem_transferbuf_free(turbomem, xfer);
 	return retval;
 }
@@ -643,7 +653,7 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 	enum dma_data_direction dir = DMA_NONE;
 
 	lba += RESERVED_SECTORS;
-	length = sectors * 512;
+	length = sectors * NAND_SECTOR_SIZE;
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
 		return -ENOMEM;
@@ -715,12 +725,12 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	int result = 0;
 	/* Round to even 4kB block */
 	loff_t offset = from & 0xfff;
-	sector_t lba = (from / 512) & 0xFFFFFFF8;
+	sector_t lba = NUM_SECTORS(from) & 0xFFFFFFF8;
 	while (bytes_read < len) {
 		size_t to_read = len - bytes_read;
 		/* Do small reads into temp buffer */
-		if (to_read < 4096) {
-			tempbuf = kmalloc(4096, GFP_KERNEL | GFP_DMA);
+		if (to_read < NAND_PAGE_SIZE) {
+			tempbuf = kmalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
 			if (!tempbuf)
 				return -ENOMEM;
 			readbuf = tempbuf;
@@ -729,14 +739,14 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		}
 		/* Read from flash */
 		result = turbomem_mtd_exec(turbomem, MODE_READ,
-				lba, 8, readbuf);
+				lba, NUM_SECTORS(NAND_PAGE_SIZE), readbuf);
 		if (result) {
 			if (tempbuf)
 				kfree(tempbuf);
 			goto out;
 		}
-		if (to_read > 4096 - offset)
-			to_read = 4096 - offset;
+		if (to_read > NAND_PAGE_SIZE - offset)
+			to_read = NAND_PAGE_SIZE - offset;
 		/* Return read data, handle partial request */
 		if (tempbuf) {
 			memcpy(buf, readbuf + offset, to_read);
@@ -746,7 +756,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 			memmove(buf, readbuf + offset, to_read);
 		}
 		buf += to_read;
-		lba += 8;
+		lba += NUM_SECTORS(NAND_PAGE_SIZE);
 		bytes_read += to_read;
 	}
 out:
@@ -759,15 +769,26 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 {
 	struct turbomem_info *turbomem = mtd->priv;
 	int result;
-	sector_t lba = to / 512;
-	int sectors = len / 512;
-	if (sectors > 8)
-		sectors = 8;
+	sector_t lba = NUM_SECTORS(to);
+	int sectors = NUM_SECTORS(len);
+	/* Write max one page at a time */
+	if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
+		sectors = NUM_SECTORS(NAND_PAGE_SIZE);
 	result = turbomem_mtd_exec(turbomem, MODE_WRITE,
 			lba, sectors, (u_char *) buf);
 	if (result)
 		return result;
-	*retlen = sectors * 512;
+	*retlen = sectors * NAND_SECTOR_SIZE;
+	return 0;
+}
+
+static int turbomem_mtd_block_isreserved(struct mtd_info *mtd, loff_t ofs)
+{
+	return 0;
+}
+
+static int turbomem_mtd_block_isbad(struct mtd_info *mtd, loff_t ofs)
+{
 	return 0;
 }
 
@@ -782,15 +803,17 @@ static int turbomem_setup_mtd(struct turbomem_info *turbomem)
 	struct mtd_info *mtd = &turbomem->mtd;
 	mtd->type = MTD_NANDFLASH;
 	mtd->flags = MTD_CAP_NANDFLASH;
-	mtd->size = turbomem->usable_flash_sectors * 512;
-	mtd->erasesize = 256*512;
-	mtd->writesize = 4096;
-	mtd->writebufsize = 4096;
+	mtd->size = turbomem->usable_flash_sectors * NAND_SECTOR_SIZE;
+	mtd->erasesize = NAND_BLOCK_SIZE;
+	mtd->writesize = NAND_PAGE_SIZE;
+	mtd->writebufsize = NAND_PAGE_SIZE;
 
 	mtd->_erase = turbomem_mtd_erase;
 	mtd->_read = turbomem_mtd_read;
 	mtd->_write = turbomem_mtd_write;
 
+	mtd->_block_isreserved = turbomem_mtd_block_isreserved;
+	mtd->_block_isbad = turbomem_mtd_block_isbad;
 	mtd->_block_markbad = turbomem_mtd_block_markbad;
 
 	mtd->owner = THIS_MODULE;
