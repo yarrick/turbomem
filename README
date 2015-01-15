@@ -11,6 +11,13 @@ turbomem 0000:04:00.0: Found Intel Turbo Memory Controller (rev 11)
 turbomem 0000:04:00.0: Device characteristics: 13404, flash size: 2048 MB
 
 
+Current status:
+---------------
+Erasing, writing and reading works.
+Bad block handling is under development.
+Suspend/resume is not supported.
+
+
 Notes:
 ------
 * The supplied Vista driver requires certain SATA controller chips to install
@@ -30,11 +37,6 @@ Enjoy,
     Erik Ekman <erik@kryo.se>
 
 ================================================================================
-
-Current status:
-Erasing, writing and reading works.
-However, an error is returned when trying to read a sector that has been
-written twice since erased.
 
 Example session:
 
