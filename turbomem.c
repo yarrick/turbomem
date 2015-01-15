@@ -54,6 +54,11 @@ Erase can be done at address 0x0, 0x200, 0x1000, 0x1200, 0x2000, 0x2200,
 The first 256kB contain serial number, option ROM and other data and is kept
 as reserved. There is probably no problem in using it as normal flash though.
 
+
+The flash chips mounted on the 2GB board are 2xIntel SD74 55nm NOP4 SLC NAND,
+part JS29F08G08CANC1 which has 2kB page size and 64byte OOB.
+The controller chip only allows 4kB pages and manages the OOB data.
+
 */
 
 #include <linux/kernel.h>
