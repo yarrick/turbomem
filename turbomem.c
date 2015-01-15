@@ -740,6 +740,8 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		} else if (offset) {
 			memmove(buf, readbuf + offset, to_read);
 		}
+		buf += to_read;
+		lba += 8;
 		bytes_read += to_read;
 	}
 out:
