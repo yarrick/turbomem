@@ -706,38 +706,45 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	struct turbomem_info *turbomem = mtd->priv;
 	u_char *tempbuf = NULL;
 	u_char *readbuf;
-	int result;
+	size_t bytes_read = 0;
+	int result = 0;
 	/* Round to even 4kB block */
 	loff_t offset = from & 0xfff;
 	sector_t lba = (from / 512) & 0xFFFFFFF8;
-	/* Do small reads into temp buffer */
-	if (len < 4096) {
-		tempbuf = kmalloc(4096, GFP_KERNEL | GFP_DMA);
-		if (!tempbuf)
-			return -ENOMEM;
-		readbuf = tempbuf;
-	} else {
-		readbuf = buf;
-	}
-	/* Read from flash */
-	result = turbomem_mtd_exec(turbomem, MODE_READ,
-			lba, 8, readbuf);
-	if (result) {
-		if (tempbuf)
+	while (bytes_read < len) {
+		size_t to_read = len - bytes_read;
+		/* Do small reads into temp buffer */
+		if (to_read < 4096) {
+			tempbuf = kmalloc(4096, GFP_KERNEL | GFP_DMA);
+			if (!tempbuf)
+				return -ENOMEM;
+			readbuf = tempbuf;
+		} else {
+			readbuf = buf;
+		}
+		/* Read from flash */
+		result = turbomem_mtd_exec(turbomem, MODE_READ,
+				lba, 8, readbuf);
+		if (result) {
+			if (tempbuf)
+				kfree(tempbuf);
+			goto out;
+		}
+		if (to_read > 4096 - offset)
+			to_read = 4096 - offset;
+		/* Return read data, handle partial request */
+		if (tempbuf) {
+			memcpy(buf, readbuf + offset, to_read);
 			kfree(tempbuf);
-		return result;
+			tempbuf = NULL;
+		} else if (offset) {
+			memmove(buf, readbuf + offset, to_read);
+		}
+		bytes_read += to_read;
 	}
-	if (len > 4096 - offset)
-		len = 4096 - offset;
-	/* Return read data, handle partial request */
-	if (tempbuf) {
-		memcpy(buf, readbuf + offset, len);
-		kfree(tempbuf);
-	} else if (offset) {
-		memmove(buf, readbuf + offset, len);
-	}
-	*retlen = len;
-	return 0;
+out:
+	*retlen = bytes_read;
+	return result;
 }
 
 static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
