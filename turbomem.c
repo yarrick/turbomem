@@ -73,13 +73,16 @@ The controller chip only allows 4kB pages and manages the OOB data.
 #define NAME_SIZE 32
 #define RESERVED_SECTORS 0x200
 
-#define STATUS_REGISTER (0x18)
-#define STATUS_INTERRUPT_MASK (0x1F)
-#define STATUS_BOOTING (0x00010000)
+#define TRANSFER_CMD_ADDR_LOWER_REGISTER (0)
+#define TRANSFER_CMD_ADDR_UPPER_REGISTER (4)
 
 #define COMMAND_REGISTER (0x10)
 #define COMMAND_START_DMA (1)
 #define COMMAND_RESET (0x100)
+
+#define STATUS_REGISTER (0x18)
+#define STATUS_INTERRUPT_MASK (0x1F)
+#define STATUS_BOOTING (0x00010000)
 
 #define INTERRUPT_CTRL_REGISTER (0x20)
 #define INTERRUPT_CTRL_ENABLE_BITS (0x3)
@@ -349,8 +352,10 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transfer)
 {
 	dma_addr_t busaddr = transfer->busaddr;
-	writele32(turbomem, 4, (busaddr >> 32) & 0xFFFFFFFF);
-	writele32(turbomem, 0, busaddr & 0xFFFFFFFF);
+	writele32(turbomem, TRANSFER_CMD_ADDR_UPPER_REGISTER,
+					(busaddr >> 32) & 0xFFFFFFFF);
+	writele32(turbomem, TRANSFER_CMD_ADDR_LOWER_REGISTER,
+					busaddr & 0xFFFFFFFF);
 }
 
 static void turbomem_setup_idle_transfer(struct turbomem_info *turbomem)
