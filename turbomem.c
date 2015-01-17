@@ -761,6 +761,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		buf += to_read;
 		lba += NUM_SECTORS(NAND_PAGE_SIZE);
 		bytes_read += to_read;
+		offset = 0; /* Only first read can be misaligned */
 	}
 out:
 	*retlen = bytes_read;
