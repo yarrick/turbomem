@@ -221,9 +221,11 @@ struct turbomem_info {
 /* Addressable unit */
 #define NAND_SECTOR_SIZE 512
 /* Unit for reads/writes */
-#define NAND_PAGE_SIZE (8*(NAND_SECTOR_SIZE))
+#define NAND_SECTORS_PER_PAGE 8
+#define NAND_PAGE_SIZE ((NAND_SECTORS_PER_PAGE)*(NAND_SECTOR_SIZE))
 /* Unit for erasing */
-#define NAND_BLOCK_SIZE (256*(NAND_SECTOR_SIZE))
+#define NAND_SECTORS_PER_BLOCK 512
+#define NAND_BLOCK_SIZE ((NAND_SECTORS_PER_BLOCK)*(NAND_SECTOR_SIZE))
 
 #define NUM_SECTORS(x) ((x)/(NAND_SECTOR_SIZE))
 
@@ -699,18 +701,17 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 	struct turbomem_info *turbomem = mtd->priv;
 	int result;
-	u64 start = instr->addr >> mtd->erasesize_shift;
-	u64 end = (instr->addr + instr->len - 1) >> mtd->erasesize_shift;
+	u64 pos = instr->addr / NAND_SECTOR_SIZE;
+	u64 end = (instr->addr + instr->len - 1) / NAND_SECTOR_SIZE;
 
-	while (start <= end) {
-		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
-			(start * 0x100), 0, NULL);
+	while (pos <= end) {
+		result = turbomem_mtd_exec(turbomem, MODE_ERASE, pos, 0, NULL);
 		if (result) {
 			instr->state = MTD_ERASE_FAILED;
-			instr->fail_addr = start << mtd->erasesize_shift;
+			instr->fail_addr = pos * NAND_SECTOR_SIZE;
 			return result;
 		}
-		start++;
+		pos += NAND_SECTORS_PER_BLOCK;
 	}
 
 	instr->state = MTD_ERASE_DONE;
@@ -734,8 +735,10 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		/* Do small reads into temp buffer */
 		if (to_read < NAND_PAGE_SIZE) {
 			tempbuf = kmalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
-			if (!tempbuf)
-				return -ENOMEM;
+			if (!tempbuf) {
+				result = -ENOMEM;
+				goto out;
+			}
 			readbuf = tempbuf;
 		} else {
 			readbuf = buf;
