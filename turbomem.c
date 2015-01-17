@@ -23,7 +23,7 @@ every 8kB. After 512 sectors (256kB), next available sector
 starts at next even 0x1000 address.
 
 Read can be done on individual sectors. Writes have to be done using
-a full 4kB block. Erase is done per 256 sectors.
+a full 4kB block. Erase is done per 512 sectors.
 
 Example:
 00000000-00000007 = 4kB
@@ -48,8 +48,7 @@ Example:
 000023F0-000023F7 = 4kB
 and so on.
 
-Erase can be done at address 0x0, 0x200, 0x1000, 0x1200, 0x2000, 0x2200,
-0x3000, 0x3200 and so on.
+Erase can be done at address 0x0, 0x1000, 0x2000, 0x3000 and so on.
 
 The first 256kB contain serial number, option ROM and other data and is kept
 as reserved. There is probably no problem in using it as normal flash though.
@@ -289,7 +288,7 @@ static void turbomem_calc_sectors(struct turbomem_info *turbomem)
 	sectors = (limit8 * limit14) * 512;
 
 	turbomem->flash_sectors = sectors;
-	/* First three 256-sector blocks are reserved */
+	/* First 512-sector block is reserved */
 	turbomem->usable_flash_sectors = sectors - RESERVED_SECTORS;
 }
 
@@ -614,11 +613,11 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 		}
 
 		turbomem_transferbuf_free(turbomem, xfer);
-		lba += 0x100;
+		lba += NAND_SECTORS_PER_BLOCK;
 	} while (lba < turbomem->flash_sectors);
 
-	dev_info(turbomem->dev, "Erase complete: %d of %d blocks failed.\n",
-		errors, turbomem->flash_sectors / 256);
+	dev_info(turbomem->dev, "Erase complete: %d of %d blocks bad.\n",
+		errors, turbomem->usable_flash_sectors / NAND_SECTORS_PER_BLOCK);
 	return size;
 }
 
