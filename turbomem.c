@@ -542,8 +542,6 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	if (i >= HW_RESET_ATTEMPTS)
 		return -EIO;
 
-	turbomem_calc_sectors(turbomem);
-
 	return 0;
 }
 
@@ -887,6 +885,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		dev_err(&dev->dev, "Unable to initialize device\n");
 		goto fail_have_iomap;
 	}
+
+	turbomem_calc_sectors(turbomem);
 
 	tasklet_init(&turbomem->tasklet, turbomem_tasklet,
 		(unsigned long) turbomem);
