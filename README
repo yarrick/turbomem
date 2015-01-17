@@ -124,3 +124,39 @@ Debugfs interface:
 turbomem 0000:04:00.0: Wiping flash!
 turbomem 0000:04:00.0: Erase complete: 102 of 16384 blocks failed.
 
+================================================================================
+
+Speedtest results (with hardcoded bad block handling):
+
+mtd_speedtest: MTD device: 0
+mtd_speedtest: MTD device size 2147221504, eraseblock size 131072, page size 4096, count of eraseblocks 16382, pages per eraseblock 32, OOB size 0
+mtd_test: scanning for bad eraseblocks
+mtd_test: scanned 16382 eraseblocks, 34 are bad
+mtd_speedtest: testing eraseblock write speed
+mtd_speedtest: eraseblock write speed is 9682 KiB/s
+mtd_speedtest: testing eraseblock read speed
+mtd_speedtest: eraseblock read speed is 27302 KiB/s
+mtd_speedtest: testing page write speed
+mtd_speedtest: page write speed is 9656 KiB/s
+mtd_speedtest: testing page read speed
+mtd_speedtest: page read speed is 27298 KiB/s
+mtd_speedtest: testing 2 page write speed
+mtd_speedtest: 2 page write speed is 9658 KiB/s
+mtd_speedtest: testing 2 page read speed
+mtd_speedtest: 2 page read speed is 27264 KiB/s
+mtd_speedtest: Testing erase speed
+mtd_speedtest: erase speed is 214818 KiB/s
+mtd_speedtest: Testing 2x multi-block erase speed
+mtd_speedtest: 2x multi-block erase speed is 215127 KiB/s
+mtd_speedtest: Testing 4x multi-block erase speed
+mtd_speedtest: 4x multi-block erase speed is 214906 KiB/s
+mtd_speedtest: Testing 8x multi-block erase speed
+mtd_speedtest: 8x multi-block erase speed is 215393 KiB/s
+mtd_speedtest: Testing 16x multi-block erase speed
+mtd_speedtest: 16x multi-block erase speed is 215193 KiB/s
+mtd_speedtest: Testing 32x multi-block erase speed
+mtd_speedtest: 32x multi-block erase speed is 215370 KiB/s
+Testing 64x multi-block erase speed
+mtd_speedtest: 64x multi-block erase speed is 215726 KiB/s
+mtd_speedtest: finished
+
