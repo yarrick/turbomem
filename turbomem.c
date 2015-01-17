@@ -774,16 +774,23 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	struct turbomem_info *turbomem = mtd->priv;
 	int result;
 	sector_t lba = NUM_SECTORS(to);
-	int sectors = NUM_SECTORS(len);
+	size_t bytes_written = 0;
 	/* Write max one page at a time */
-	if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
-		sectors = NUM_SECTORS(NAND_PAGE_SIZE);
-	result = turbomem_mtd_exec(turbomem, MODE_WRITE,
-			lba, sectors, (u_char *) buf);
-	if (result)
-		return result;
-	*retlen = sectors * NAND_SECTOR_SIZE;
-	return 0;
+	while (bytes_written < len) {
+		int sectors = NUM_SECTORS(len - bytes_written);
+		if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
+			sectors = NUM_SECTORS(NAND_PAGE_SIZE);
+		result = turbomem_mtd_exec(turbomem, MODE_WRITE,
+				lba, sectors, (u_char *) buf);
+		if (result)
+			goto out;
+		buf += NAND_SECTOR_SIZE * sectors;
+		bytes_written += NAND_SECTOR_SIZE * sectors;
+		lba += sectors;
+	}
+out:
+	*retlen = bytes_written;
+	return result;
 }
 
 static int turbomem_mtd_block_isreserved(struct mtd_info *mtd, loff_t ofs)
