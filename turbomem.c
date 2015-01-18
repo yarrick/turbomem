@@ -71,7 +71,22 @@ The controller chip only allows 4kB pages and manages the OOB data.
 
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 32
-#define RESERVED_SECTORS 0x200
+
+/* Addressable unit */
+#define NAND_SECTOR_SIZE 512
+/* Unit for reads/writes */
+#define NAND_SECTORS_PER_PAGE 8
+#define NAND_PAGE_SIZE ((NAND_SECTORS_PER_PAGE)*(NAND_SECTOR_SIZE))
+/* Unit for erasing */
+#define NAND_SECTORS_PER_BLOCK 512
+#define NAND_BLOCK_SIZE ((NAND_SECTORS_PER_BLOCK)*(NAND_SECTOR_SIZE))
+
+#define NUM_SECTORS(x) ((x)/(NAND_SECTOR_SIZE))
+
+#define BBT_BLOCKS 4
+/* First block is for OROM and things, then bad block tables */
+#define RESERVED_SECTORS ((NAND_SECTORS_PER_BLOCK) * (1 + BBT_BLOCKS))
+
 
 #define TRANSFER_CMD_ADDR_LOWER_REGISTER (0)
 #define TRANSFER_CMD_ADDR_UPPER_REGISTER (4)
@@ -202,6 +217,19 @@ enum command_result {
 	RESULT_READ_ERASED_SECTOR = 0x8FF2,
 };
 
+/*
+ * Bad block table will contain 4096 entries for 1GB board, 8192 for 2GB
+ * and 16384 for 4GB version. It will be stored in two eraseblocks, with one
+ * primary and the other as mirror. The bbt[] uses one bit per eraseblock,
+ * so all sizes of the struct will fit in one page (4096 bytes).
+ */
+struct turbomem_bbt {
+	u32 magic;
+	u32 version;
+	u32 eraseblocks;
+	u8 bbt[0];
+};
+
 struct turbomem_info {
 	struct device *dev;
 	struct dentry *debugfs_dir;
@@ -218,18 +246,8 @@ struct turbomem_info {
 	unsigned characteristics;
 	unsigned flash_sectors;
 	unsigned usable_flash_sectors;
+	struct turbomem_bbt *bbt;
 };
-
-/* Addressable unit */
-#define NAND_SECTOR_SIZE 512
-/* Unit for reads/writes */
-#define NAND_SECTORS_PER_PAGE 8
-#define NAND_PAGE_SIZE ((NAND_SECTORS_PER_PAGE)*(NAND_SECTOR_SIZE))
-/* Unit for erasing */
-#define NAND_SECTORS_PER_BLOCK 512
-#define NAND_BLOCK_SIZE ((NAND_SECTORS_PER_BLOCK)*(NAND_SECTOR_SIZE))
-
-#define NUM_SECTORS(x) ((x)/(NAND_SECTOR_SIZE))
 
 static struct dentry *debugfs_root = NULL;
 
@@ -659,7 +677,6 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 	dma_addr_t busaddr = 0;
 	enum dma_data_direction dir = DMA_NONE;
 
-	lba += RESERVED_SECTORS;
 	length = sectors * NAND_SECTOR_SIZE;
 	xfer = turbomem_transferbuf_alloc(turbomem);
 	if (!xfer)
@@ -707,7 +724,8 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 	u64 end = (instr->addr + instr->len - 1) / NAND_SECTOR_SIZE;
 
 	while (pos <= end) {
-		result = turbomem_mtd_exec(turbomem, MODE_ERASE, pos, 0, NULL);
+		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
+				RESERVED_SECTORS + pos, 0, NULL);
 		if (result) {
 			instr->state = MTD_ERASE_FAILED;
 			instr->fail_addr = pos * NAND_SECTOR_SIZE;
@@ -747,7 +765,8 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		}
 		/* Read from flash */
 		result = turbomem_mtd_exec(turbomem, MODE_READ,
-				lba, NUM_SECTORS(NAND_PAGE_SIZE), readbuf);
+				RESERVED_SECTORS + lba,
+				NUM_SECTORS(NAND_PAGE_SIZE), readbuf);
 		if (result) {
 			if (tempbuf)
 				kfree(tempbuf);
@@ -786,7 +805,7 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 		if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
 			sectors = NUM_SECTORS(NAND_PAGE_SIZE);
 		result = turbomem_mtd_exec(turbomem, MODE_WRITE,
-				lba, sectors, (u_char *) buf);
+			RESERVED_SECTORS + lba, sectors, (u_char *) buf);
 		if (result)
 			goto out;
 		buf += NAND_SECTOR_SIZE * sectors;
@@ -798,20 +817,203 @@ out:
 	return result;
 }
 
-static int turbomem_mtd_block_isreserved(struct mtd_info *mtd, loff_t ofs)
+#define BBT_MAGIC_PRIMARY (0xbadb10c0)
+#define BBT_MAGIC_MIRROR  (0xbadb10c1)
+
+static int turbomem_read_bbt(struct turbomem_info *turbomem)
 {
+	unsigned i;
+	int result;
+	u8 *buf = kzalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
+	struct turbomem_bbt *bbt = NULL;
+	if (!buf)
+		return -ENOMEM;
+
+	for (i = NAND_SECTORS_PER_BLOCK; i < RESERVED_SECTORS;
+						i += NAND_SECTORS_PER_BLOCK) {
+		result = turbomem_mtd_exec(turbomem, MODE_READ,
+			i, NAND_SECTORS_PER_PAGE, buf);
+		if (result)
+			return result;
+		bbt = (struct turbomem_bbt *) buf;
+		/* Found primary table */
+		if (bbt->magic == BBT_MAGIC_PRIMARY) {
+			turbomem->bbt = bbt;
+			return 0;
+		}
+	}
+
+	/* Found mirror table */
+	if (bbt->magic == BBT_MAGIC_MIRROR) {
+		turbomem->bbt = bbt;
+		return 0;
+	}
+
+	kfree(buf);
+	return -ENODATA;
+}
+
+/* Convert user addr to eraseblock index */
+static unsigned turbomem_get_eraseblock(loff_t addr)
+{
+	unsigned sector = RESERVED_SECTORS + (addr / NAND_SECTOR_SIZE);
+	return sector / (NAND_SECTORS_PER_BLOCK);
+}
+
+static void turbomem_markbad(struct turbomem_bbt *bbt, unsigned eb)
+{
+	if (eb > bbt->eraseblocks)
+		return;
+
+	bbt->bbt[eb / 8] |= (1 << (eb & 7));
+}
+
+static int turbomem_isbad(struct turbomem_bbt *bbt, unsigned eb)
+{
+	if (eb > bbt->eraseblocks)
+		return 0;
+
+	if (bbt->bbt[eb / 8] & (1 << (eb & 7)))
+		return 1;
 	return 0;
+}
+
+static int turbomem_count_bad(struct turbomem_bbt *bbt)
+{
+	int i = 0;
+	int count = 0;
+	u8 *table = bbt->bbt;
+
+	/* Count number of bad blocks in table */
+	while (i < bbt->eraseblocks) {
+		int pos;
+		for (pos = 0; pos < 8; pos ++) {
+			if (*table & (1 << pos))
+				count++;
+			i++;
+		}
+		table++;
+	}
+	return count;
+}
+
+static int turbomem_format_build_bbt(struct turbomem_info *turbomem)
+{
+	struct turbomem_bbt *bbt = NULL;
+	unsigned i;
+	bbt = kzalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
+	if (!bbt)
+		return -ENOMEM;
+
+	bbt->magic = BBT_MAGIC_PRIMARY;
+	bbt->version = 1;
+	bbt->eraseblocks = turbomem->flash_sectors / NAND_SECTORS_PER_BLOCK;
+	for (i = 0; i < turbomem->usable_flash_sectors;
+						i += NAND_SECTORS_PER_BLOCK) {
+		int result;
+		struct transferbuf_handle *xfer;
+		xfer = turbomem_transferbuf_alloc(turbomem);
+		if (!xfer)
+			return -ENOMEM;
+		/* Erase usable flash looking for bad blocks */
+		result = turbomem_do_io(turbomem, RESERVED_SECTORS + i,
+			0, xfer, 0, MODE_ERASE);
+		if (result) {
+			/* Bad block */
+			loff_t addr = i * (NAND_SECTOR_SIZE);
+			unsigned eb = turbomem_get_eraseblock(addr);
+			turbomem_markbad(bbt, eb);
+		}
+		turbomem_transferbuf_free(turbomem, xfer);
+	}
+	turbomem->bbt = bbt;
+	return 0;
+}
+
+static int turbomem_save_bbt(struct turbomem_info *turbomem)
+{
+	struct turbomem_bbt *bbt_out;
+	unsigned i;
+	int result;
+	bbt_out = kzalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
+	if (!bbt_out)
+		return -ENOMEM;
+
+	memcpy(bbt_out, turbomem->bbt, sizeof(struct turbomem_bbt) +
+		((turbomem->flash_sectors / (NAND_SECTORS_PER_BLOCK)) + 7) / 8);
+	for (i = NAND_SECTORS_PER_BLOCK; i < RESERVED_SECTORS;
+						i += NAND_SECTORS_PER_BLOCK) {
+		/* Erase new BBT spot */
+		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
+			i, 0, NULL);
+		if (result == 0) {
+			/* Write BBT */
+			result = turbomem_mtd_exec(turbomem, MODE_WRITE, i,
+				NAND_SECTORS_PER_PAGE, (u_char *) bbt_out);
+		}
+		if (result) {
+			/* Mark bad in main bbt and this copy */
+			turbomem_markbad(turbomem->bbt,
+				i / NAND_SECTORS_PER_BLOCK);
+			turbomem_markbad(bbt_out, i / NAND_SECTORS_PER_BLOCK);
+			continue;
+		}
+		/* Erase and write successful */
+		if (bbt_out->magic == BBT_MAGIC_PRIMARY) {
+			dev_info(turbomem->dev,
+				"Main BBT v%d written at sector %08X\n",
+				bbt_out->version, i);
+			bbt_out->magic = BBT_MAGIC_MIRROR;
+		} else if (bbt_out->magic == BBT_MAGIC_MIRROR) {
+			dev_info(turbomem->dev,
+				"Spare BBT v%d written at sector %08X\n",
+				bbt_out->version, i);
+			/* All done. */
+			return 0;
+		}
+	}
+
+	/* Failed to write two copies of BBT */
+	return -EIO;
+}
+
+static int turbomem_init_bbt(struct turbomem_info *turbomem)
+{
+	int ret;
+	ret = turbomem_read_bbt(turbomem);
+	if (ret == -ENODATA) {
+		dev_warn(turbomem->dev, "No bad block data found, will format"
+					" and create new!\n");
+		ret = turbomem_format_build_bbt(turbomem);
+		if (ret)
+			return ret;
+		ret = turbomem_save_bbt(turbomem);
+		if (ret) {
+			kfree(turbomem->bbt);
+			return ret;
+		}
+	} else if (ret) {
+		dev_err(turbomem->dev, "Failed looking for bad block data\n");
+		return ret;
+	}
+	dev_info(turbomem->dev,
+		"Using bad block table version %d, with %d bad blocks\n",
+		turbomem->bbt->version, turbomem_count_bad(turbomem->bbt));
+	return ret;
 }
 
 static int turbomem_mtd_block_isbad(struct mtd_info *mtd, loff_t ofs)
 {
-	return 0;
+	struct turbomem_info *turbomem = mtd->priv;
+	return turbomem_isbad(turbomem->bbt, turbomem_get_eraseblock(ofs));
 }
 
 static int turbomem_mtd_block_markbad(struct mtd_info *mtd, loff_t ofs)
 {
-	/* No-op implementation */
-	return 0;
+	struct turbomem_info *turbomem = mtd->priv;
+	turbomem_markbad(turbomem->bbt, turbomem_get_eraseblock(ofs));
+	turbomem->bbt->version++;
+	return turbomem_save_bbt(turbomem);
 }
 
 static int turbomem_setup_mtd(struct turbomem_info *turbomem)
@@ -828,7 +1030,6 @@ static int turbomem_setup_mtd(struct turbomem_info *turbomem)
 	mtd->_read = turbomem_mtd_read;
 	mtd->_write = turbomem_mtd_write;
 
-	mtd->_block_isreserved = turbomem_mtd_block_isreserved;
 	mtd->_block_isbad = turbomem_mtd_block_isbad;
 	mtd->_block_markbad = turbomem_mtd_block_markbad;
 
@@ -922,16 +1123,24 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 11);
 
+	ret = turbomem_init_bbt(turbomem);
+	if (ret) {
+		dev_err(&dev->dev, "Unable to initialize bad blocks table\n");
+		goto fail_have_idle_transfer;
+	}
+
 	ret = turbomem_setup_mtd(turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to register to MTD layer\n");
-		goto fail_have_idle_transfer;
+		goto fail_have_bbt;
 	}
 
 	turbomem_debugfs_dev_add(turbomem);
 
 	return 0;
 
+fail_have_bbt:
+	kfree(turbomem->bbt);
 fail_have_idle_transfer:
 	if (turbomem->idle_transfer)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
@@ -957,6 +1166,7 @@ static void turbomem_remove(struct pci_dev *dev)
 
 	turbomem_debugfs_dev_remove(turbomem);
 	mtd_device_unregister(&turbomem->mtd);
+	kfree(turbomem->bbt);
 	if (turbomem->idle_transfer)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_cmd);
