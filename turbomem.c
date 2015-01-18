@@ -69,6 +69,12 @@ The controller chip only allows 4kB pages and manages the OOB data.
 #include <linux/debugfs.h>
 #include <linux/mtd/mtd.h>
 
+static int debug;
+module_param(debug, int, 0);
+MODULE_PARM_DESC(debug, "Debug mode (1=log all I/O)");
+
+#define DBG(fmt, args...) if (debug) printk(KERN_DEBUG "turbomem: " fmt, ##args)
+
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 32
 
@@ -723,7 +729,10 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 	u64 pos = instr->addr / NAND_SECTOR_SIZE;
 	u64 end = (instr->addr + instr->len - 1) / NAND_SECTOR_SIZE;
 
+	DBG("Erase from addr %08llX (sector %08llX) len %llu\n", instr->addr,
+		pos, instr->len);
 	while (pos <= end) {
+		DBG("Suberase lba %08llX\n", RESERVED_SECTORS + pos);
 		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
 				RESERVED_SECTORS + pos, 0, NULL);
 		if (result) {
@@ -748,8 +757,9 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	size_t bytes_read = 0;
 	int result = 0;
 	/* Round to even 4kB block */
-	loff_t offset = from & 0xfff;
+	unsigned offset = from & 0xfff;
 	sector_t lba = NUM_SECTORS(from) & 0xFFFFFFF8;
+	DBG("Read len %lu from addr %08llX, sector %08lX\n", len, from, lba);
 	while (bytes_read < len) {
 		size_t to_read = len - bytes_read;
 		/* Do small reads into temp buffer */
@@ -763,6 +773,8 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		} else {
 			readbuf = buf;
 		}
+		DBG("Subread %lu bytes to lba %08lX offset %u to %p\n",
+			to_read, lba, offset, readbuf);
 		/* Read from flash */
 		result = turbomem_mtd_exec(turbomem, MODE_READ,
 				RESERVED_SECTORS + lba,
@@ -782,6 +794,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		} else if (offset) {
 			memmove(buf, readbuf + offset, to_read);
 		}
+		DBG("Read %lu bytes to buf %p\n", to_read, buf);
 		buf += to_read;
 		lba += NUM_SECTORS(NAND_PAGE_SIZE);
 		bytes_read += to_read;
@@ -799,11 +812,14 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	int result;
 	sector_t lba = NUM_SECTORS(to);
 	size_t bytes_written = 0;
+	DBG("Write len %lu to addr %08llX, sector %08lX\n",
+		len, to, lba);
 	/* Write max one page at a time */
 	while (bytes_written < len) {
 		int sectors = NUM_SECTORS(len - bytes_written);
 		if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
 			sectors = NUM_SECTORS(NAND_PAGE_SIZE);
+		DBG("Subwrite %d sectors to lba %08lX\n", sectors, lba);
 		result = turbomem_mtd_exec(turbomem, MODE_WRITE,
 			RESERVED_SECTORS + lba, sectors, (u_char *) buf);
 		if (result)
@@ -1136,6 +1152,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	turbomem_debugfs_dev_add(turbomem);
+
+	DBG("Loaded turbomem driver with debug enabled\n");
 
 	return 0;
 
