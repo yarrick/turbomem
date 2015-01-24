@@ -122,24 +122,6 @@ enum iomode {
 	MODE_NOP = 0x35,
 };
 
-enum xfer_status {
-	XFER_QUEUED = 0,
-	XFER_DONE,
-	XFER_FAILED,
-};
-
-struct transferbuf_handle {
-	/* Virtual address of struct transfer_command buffer */
-	void *buf;
-	/* DMA address to the same buffer, for writing to HW */
-	dma_addr_t busaddr;
-	/* Linked list item */
-	struct list_head list;
-	/* Operation status */
-	enum xfer_status status;
-	struct completion completion;
-};
-
 /*
  * This struct is given to the device to initiate a transfer.
  * The bus address of it is written to the 64bit register at offset 0.
@@ -243,16 +225,32 @@ struct turbomem_info {
 	char name[NAME_SIZE];
 	void __iomem *mem;
 	struct dma_pool *dmapool_cmd;
-	spinlock_t lock;
-	struct list_head transfer_queue;
+	struct mutex lock;
 	struct transferbuf_handle *curr_transfer;
 	struct transferbuf_handle *idle_transfer;
-	struct tasklet_struct tasklet;
-	atomic_t irq_statusword;
+	u32 irq_statusword;
 	unsigned characteristics;
 	unsigned flash_sectors;
 	unsigned usable_flash_sectors;
 	struct turbomem_bbt *bbt;
+};
+
+enum xfer_status {
+	XFER_QUEUED = 0,
+	XFER_DONE,
+	XFER_FAILED,
+	XFER_TIMEOUT,
+};
+
+struct transferbuf_handle {
+	/* Virtual address of struct transfer_command buffer */
+	void *buf;
+	/* DMA address to the same buffer, for writing to HW */
+	dma_addr_t busaddr;
+	/* Operation status */
+	enum xfer_status status;
+	/* IRQ completion */
+	struct completion completion;
 };
 
 static struct dentry *debugfs_root = NULL;
@@ -329,37 +327,17 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	if (status == 0xFFFFFFFF || (status & STATUS_INTERRUPT_MASK) == 0)
 		return IRQ_NONE;
 
-	atomic_set(&turbomem->irq_statusword, status);
+	turbomem->irq_statusword = status;
 	turbomem_enable_interrupts(turbomem, 0);
 
 	reg = readle32(turbomem, STATUS_REGISTER);
 	writele32(turbomem, STATUS_REGISTER, reg & STATUS_INTERRUPT_MASK);
 
-	tasklet_schedule(&turbomem->tasklet);
-
-	return IRQ_HANDLED;
-}
-
-static struct transferbuf_handle *turbomem_transferbuf_alloc(
-	struct turbomem_info *turbomem)
-{
-	struct transferbuf_handle *transferbuf;
-
-	transferbuf = kzalloc(sizeof(*transferbuf), GFP_KERNEL);
-	if (!transferbuf)
-		return NULL;
-
-	transferbuf->buf = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL,
-		&transferbuf->busaddr);
-	if (!transferbuf->buf) {
-		kfree(transferbuf);
-		return NULL;
+	if (turbomem->curr_transfer) {
+		complete_all(&turbomem->curr_transfer->completion);
 	}
 
-	memset(transferbuf->buf, 0, sizeof(struct transfer_command));
-	INIT_LIST_HEAD(&transferbuf->list);
-	init_completion(&transferbuf->completion);
-	return transferbuf;
+	return IRQ_HANDLED;
 }
 
 /* Both the transfer_command and the transferbuf_handle will be freed. */
@@ -376,6 +354,7 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transfer)
 {
 	dma_addr_t busaddr = transfer->busaddr;
+	turbomem->curr_transfer = transfer;
 	writele32(turbomem, TRANSFER_CMD_ADDR_UPPER_REGISTER,
 					(busaddr >> 32) & 0xFFFFFFFF);
 	writele32(turbomem, TRANSFER_CMD_ADDR_LOWER_REGISTER,
@@ -400,85 +379,25 @@ static void turbomem_start_idle_transfer(struct turbomem_info *turbomem)
 	turbomem_enable_interrupts(turbomem, 1);
 }
 
-static void turbomem_queue_transfer(struct turbomem_info *turbomem,
-	struct transferbuf_handle *transfer)
+static struct transferbuf_handle *turbomem_transferbuf_alloc(
+	struct turbomem_info *turbomem)
 {
-	if (transfer == turbomem->idle_transfer) {
-		dev_warn(turbomem->dev,
-			"Blocked attempt to queue the idle transfer\n");
-		WARN_ON(transfer == turbomem->idle_transfer);
-		return;
+	struct transferbuf_handle *transferbuf;
+
+	transferbuf = kzalloc(sizeof(*transferbuf), GFP_KERNEL);
+	if (!transferbuf)
+		return NULL;
+
+	transferbuf->buf = dma_pool_alloc(turbomem->dmapool_cmd, GFP_KERNEL,
+		&transferbuf->busaddr);
+	if (!transferbuf->buf) {
+		kfree(transferbuf);
+		return NULL;
 	}
 
-	spin_lock_bh(&turbomem->lock);
-	list_add_tail(&transfer->list, &turbomem->transfer_queue);
-	spin_unlock_bh(&turbomem->lock);
-}
-
-static void turbomem_start_next_transfer(struct turbomem_info *turbomem)
-{
-	spin_lock_bh(&turbomem->lock);
-
-	/* TODO start more than one transfer at a time */
-	if (!list_empty(&turbomem->transfer_queue)
-		&& !turbomem->curr_transfer) {
-
-		struct transfer_command *cmd;
-		struct transferbuf_handle *handle;
-		struct list_head *elem;
-		elem = turbomem->transfer_queue.next;
-		list_del(elem);
-		handle= list_entry(elem, struct transferbuf_handle, list);
-
-		/* Chain idle transfer as next item */
-		cmd = handle->buf;
-		turbomem_setup_idle_transfer(turbomem);
-		cmd->next_command = cpu_to_le64(
-			turbomem->idle_transfer->busaddr);
-
-		/* Mark first job */
-		cmd = handle->buf;
-		cmd->first_transfer = 1;
-		turbomem->curr_transfer = handle;
-
-		/* Write addr, enable IRQ and DMA */
-		turbomem_write_transfer_to_hw(turbomem, handle);
-		turbomem_enable_interrupts(turbomem, 1);
-		writele32(turbomem, COMMAND_REGISTER, COMMAND_START_DMA);
-	}
-
-	/* If nothing queued, start idle transfer instead */
-	if (!turbomem->curr_transfer)
-		turbomem_start_idle_transfer(turbomem);
-
-	spin_unlock_bh(&turbomem->lock);
-}
-
-static void turbomem_tasklet(unsigned long privdata)
-{
-	int status;
-	u64 curr_transfer;
-	struct turbomem_info *turbomem = (struct turbomem_info *) privdata;
-
-	status = atomic_read(&turbomem->irq_statusword);
-	curr_transfer = le64_to_cpu(ioread32(turbomem->mem) |
-		((u64) ioread32(turbomem->mem + 4)) << 32);
-
-	spin_lock_bh(&turbomem->lock);
-	if (turbomem->curr_transfer) {
-		if (status == 1)
-			/* Transfer completed */
-			turbomem->curr_transfer->status = XFER_DONE;
-		else
-			/* Transfer failed */
-			turbomem->curr_transfer->status = XFER_FAILED;
-		complete_all(&turbomem->curr_transfer->completion);
-		turbomem->curr_transfer = NULL;
-	}
-	spin_unlock_bh(&turbomem->lock);
-
-	/* This will re-enable interrupts, directly or via idle transfer */
-	turbomem_start_next_transfer(turbomem);
+	memset(transferbuf->buf, 0, sizeof(struct transfer_command));
+	init_completion(&transferbuf->completion);
+	return transferbuf;
 }
 
 static sector_t turbomem_translate_lba(sector_t lba)
@@ -497,6 +416,10 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	struct transfer_command *cmd = xfer->buf;
 	lba = turbomem_translate_lba(lba);
 
+	/* We must have the lock here */
+	BUG_ON(mutex_is_locked(&turbomem->lock) == 0);
+
+	/* Setup transfer command */
 	cmd = xfer->buf;
 	cmd->result = cpu_to_le32(3);
 	cmd->transfer_flags = cpu_to_le32(0x80000001);
@@ -508,10 +431,31 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	cmd->data_buffer = cpu_to_le64(busaddr);
 	cmd->data_buffer_valid = 1;
 
-	turbomem_queue_transfer(turbomem, xfer);
-	turbomem_start_next_transfer(turbomem);
+	/* Chain idle transfer as next item */
+	turbomem_setup_idle_transfer(turbomem);
+	cmd->next_command = cpu_to_le64(
+		turbomem->idle_transfer->busaddr);
 
-	wait_for_completion_interruptible(&xfer->completion);
+	/* Mark first job */
+	cmd->first_transfer = 1;
+
+	/* Write addr, enable IRQ and DMA */
+	turbomem_write_transfer_to_hw(turbomem, xfer);
+	turbomem_enable_interrupts(turbomem, 1);
+	writele32(turbomem, COMMAND_REGISTER, COMMAND_START_DMA);
+
+	/* Wait for interrupt completion */
+	wait_for_completion_io(&xfer->completion);
+
+	if (turbomem->irq_statusword == 1)
+		/* Transfer completed */
+		turbomem->curr_transfer->status = XFER_DONE;
+	else
+		/* Transfer failed */
+		turbomem->curr_transfer->status = XFER_FAILED;
+
+	/* Setup new idle transfer, will enable interrupts again */
+	turbomem_start_idle_transfer(turbomem);
 
 	/* Check error on transfer */
 	if (xfer->status != XFER_DONE)
@@ -592,8 +536,12 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	}
 	memset(buf4k, 0, NAND_PAGE_SIZE);
 
+	mutex_lock(&turbomem->lock);
+
 	retval = turbomem_do_io(turbomem, addr, NUM_SECTORS(NAND_PAGE_SIZE),
 			xfer, bus4k, MODE_READ);
+
+	mutex_unlock(&turbomem->lock);
 	if (xfer->status == XFER_FAILED) {
 		/* Found erased page, end of OROM */
 		retval = 0;
@@ -626,6 +574,7 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 
 	lba = RESERVED_SECTORS;
 	errors = 0;
+	mutex_lock(&turbomem->lock);
 	do {
 		struct transferbuf_handle *xfer;
 		int ret;
@@ -642,6 +591,7 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 		turbomem_transferbuf_free(turbomem, xfer);
 		lba += NAND_SECTORS_PER_BLOCK;
 	} while (lba < turbomem->flash_sectors);
+	mutex_unlock(&turbomem->lock);
 
 	dev_info(turbomem->dev, "Erase complete: %d of %d blocks bad.\n",
 		errors, turbomem->usable_flash_sectors / NAND_SECTORS_PER_BLOCK);
@@ -682,6 +632,9 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 	int length;
 	dma_addr_t busaddr = 0;
 	enum dma_data_direction dir = DMA_NONE;
+
+	/* We must have the lock here */
+	BUG_ON(mutex_is_locked(&turbomem->lock) == 0);
 
 	length = sectors * NAND_SECTOR_SIZE;
 	xfer = turbomem_transferbuf_alloc(turbomem);
@@ -731,6 +684,7 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 
 	DBG("Erase from addr %08llX (sector %08llX) len %llu\n", instr->addr,
 		pos, instr->len);
+	mutex_lock(&turbomem->lock);
 	while (pos <= end) {
 		DBG("Suberase lba %08llX\n", RESERVED_SECTORS + pos);
 		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
@@ -738,10 +692,12 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 		if (result) {
 			instr->state = MTD_ERASE_FAILED;
 			instr->fail_addr = pos * NAND_SECTOR_SIZE;
+			mutex_unlock(&turbomem->lock);
 			return result;
 		}
 		pos += NAND_SECTORS_PER_BLOCK;
 	}
+	mutex_unlock(&turbomem->lock);
 
 	instr->state = MTD_ERASE_DONE;
 	mtd_erase_callback(instr);
@@ -760,6 +716,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	unsigned offset = from & 0xfff;
 	sector_t lba = NUM_SECTORS(from) & 0xFFFFFFF8;
 	DBG("Read len %lu from addr %08llX, sector %08lX\n", len, from, lba);
+	mutex_lock(&turbomem->lock);
 	while (bytes_read < len) {
 		size_t to_read = len - bytes_read;
 		/* Do small reads into temp buffer */
@@ -801,6 +758,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		offset = 0; /* Only first read can be misaligned */
 	}
 out:
+	mutex_unlock(&turbomem->lock);
 	*retlen = bytes_read;
 	return result;
 }
@@ -814,6 +772,7 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	size_t bytes_written = 0;
 	DBG("Write len %lu to addr %08llX, sector %08lX\n",
 		len, to, lba);
+	mutex_lock(&turbomem->lock);
 	/* Write max one page at a time */
 	while (bytes_written < len) {
 		int sectors = NUM_SECTORS(len - bytes_written);
@@ -829,6 +788,7 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 		lba += sectors;
 	}
 out:
+	mutex_unlock(&turbomem->lock);
 	*retlen = bytes_written;
 	return result;
 }
@@ -845,28 +805,31 @@ static int turbomem_read_bbt(struct turbomem_info *turbomem)
 	if (!buf)
 		return -ENOMEM;
 
+	mutex_lock(&turbomem->lock);
 	for (i = NAND_SECTORS_PER_BLOCK; i < RESERVED_SECTORS;
 						i += NAND_SECTORS_PER_BLOCK) {
 		result = turbomem_mtd_exec(turbomem, MODE_READ,
 			i, NAND_SECTORS_PER_PAGE, buf);
 		if (result)
-			return result;
+			break;
 		bbt = (struct turbomem_bbt *) buf;
-		/* Found primary table */
-		if (bbt->magic == BBT_MAGIC_PRIMARY) {
+		/* Found a table */
+		if (bbt->magic == BBT_MAGIC_PRIMARY ||
+				bbt->magic == BBT_MAGIC_MIRROR) {
 			turbomem->bbt = bbt;
-			return 0;
+			break;
 		}
 	}
+	mutex_unlock(&turbomem->lock);
 
-	/* Found mirror table */
-	if (bbt->magic == BBT_MAGIC_MIRROR) {
-		turbomem->bbt = bbt;
+	if (turbomem->bbt)
 		return 0;
-	}
 
 	kfree(buf);
-	return -ENODATA;
+	if (result)
+		return result; /* Read error */
+	else
+		return -ENODATA; /* Found no bbt data */
 }
 
 /* Convert user addr to eraseblock index */
@@ -924,13 +887,16 @@ static int turbomem_format_build_bbt(struct turbomem_info *turbomem)
 	bbt->magic = BBT_MAGIC_PRIMARY;
 	bbt->version = 1;
 	bbt->eraseblocks = turbomem->flash_sectors / NAND_SECTORS_PER_BLOCK;
+	mutex_lock(&turbomem->lock);
 	for (i = 0; i < turbomem->usable_flash_sectors;
 						i += NAND_SECTORS_PER_BLOCK) {
 		int result;
 		struct transferbuf_handle *xfer;
 		xfer = turbomem_transferbuf_alloc(turbomem);
-		if (!xfer)
+		if (!xfer) {
+			mutex_unlock(&turbomem->lock);
 			return -ENOMEM;
+		}
 		/* Erase usable flash looking for bad blocks */
 		result = turbomem_do_io(turbomem, RESERVED_SECTORS + i,
 			0, xfer, 0, MODE_ERASE);
@@ -942,6 +908,7 @@ static int turbomem_format_build_bbt(struct turbomem_info *turbomem)
 		}
 		turbomem_transferbuf_free(turbomem, xfer);
 	}
+	mutex_unlock(&turbomem->lock);
 	turbomem->bbt = bbt;
 	return 0;
 }
@@ -957,6 +924,7 @@ static int turbomem_save_bbt(struct turbomem_info *turbomem)
 
 	memcpy(bbt_out, turbomem->bbt, sizeof(struct turbomem_bbt) +
 		((turbomem->flash_sectors / (NAND_SECTORS_PER_BLOCK)) + 7) / 8);
+	mutex_lock(&turbomem->lock);
 	for (i = NAND_SECTORS_PER_BLOCK; i < RESERVED_SECTORS;
 						i += NAND_SECTORS_PER_BLOCK) {
 		/* Erase new BBT spot */
@@ -985,9 +953,11 @@ static int turbomem_save_bbt(struct turbomem_info *turbomem)
 				"Spare BBT v%d written at sector %08X\n",
 				bbt_out->version, i);
 			/* All done. */
+			mutex_unlock(&turbomem->lock);
 			return 0;
 		}
 	}
+	mutex_unlock(&turbomem->lock);
 
 	/* Failed to write two copies of BBT */
 	return -EIO;
@@ -1105,9 +1075,6 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	turbomem_calc_sectors(turbomem);
 
-	tasklet_init(&turbomem->tasklet, turbomem_tasklet,
-		(unsigned long) turbomem);
-
 	ret = request_irq(dev->irq, turbomem_isr, IRQF_SHARED,
 			DRIVER_NAME, turbomem);
 	if (ret) {
@@ -1130,8 +1097,7 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 	turbomem_start_idle_transfer(turbomem);
 
-	spin_lock_init(&turbomem->lock);
-	INIT_LIST_HEAD(&turbomem->transfer_queue);
+	mutex_init(&turbomem->lock);
 
 	snprintf(turbomem->name, NAME_SIZE - 1, "TurboMemory@%s",
 		dev_name(turbomem->dev));
@@ -1166,7 +1132,6 @@ fail_have_dmapool:
 	dma_pool_destroy(turbomem->dmapool_cmd);
 fail_have_irq:
 	free_irq(dev->irq, turbomem);
-	tasklet_kill(&turbomem->tasklet);
 fail_have_iomap:
 	iounmap(turbomem->mem);
 fail_have_regions:
@@ -1189,7 +1154,6 @@ static void turbomem_remove(struct pci_dev *dev)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
-	tasklet_kill(&turbomem->tasklet);
 	iounmap(turbomem->mem);
 	pci_release_regions(dev);
 	pci_disable_device(dev);
