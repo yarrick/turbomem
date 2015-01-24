@@ -13,20 +13,49 @@ turbomem 0000:04:00.0: Device characteristics: 13404, flash size: 2048 MB
 
 Current status:
 ---------------
-Erasing, writing and reading works.
-Bad block handling is under development.
+Erasing, writing and reading works, bad block handling is done.
+Driver passes mtd_pagetest and ubi tests.
+Device is mountable with ubifs, but does not work properly.
 Suspend/resume is not supported.
 
+How to format and mount:
+------------------------
+1. Install mtd-utils from http://www.linux-mtd.infradead.org/
+2. Load MTD support
+   # modprobe mtd
+3. Load driver (creates /dev/mtd0)
+   # insmod turbomem.ko
+4. Format device for UBI (only needed first time)
+   # ubiformat /dev/mtd0
+5. Load UBI support
+   # modprobe ubi
+6. Attach UBI device to stack (creates /dev/ubi0)
+   # ubiattach -p /dev/mtd0
+7. Show info about UBI device (only needed first time)
+   Get size of device for next step
+     (Amount of available logical eraseblocks, bytes)
+   # ubinfo /dev/ubi0
+8. Create UBIFS volume on top of ubi0
+   (creates /dev/ubi0_0, only needed first time)
+   size = 2037456896 for 2GB. name is required but does not matter
+   # ubimkvol -s <size> -N <name> /dev/ubi0
+9. Mount UBIFS
+   # mount -t ubifs /dev/ubi0_0 /mnt/turbomem
+10. Now test reading/writing in your mounted directory
 
 Notes:
 ------
+* When module is loaded, eraseblocks 1-5 will be scanned for a bad block table.
+  If none is found, all non-reserved eraseblocks will be erased to gather info
+  on which blocks are bad. The data will be written twice at blocks 1-5.
+
+* If you use both Linux and Windows on the computer with this card, uninstall
+  the Turbo Memory driver in Windows before using this driver. Windows and
+  Linux drivers use different bad block tables and will erase all flash.
+
 * The supplied Vista driver requires certain SATA controller chips to install
   and work. Since this driver does no disk filtering hopefully the Turbo Memory
   will work in any board with a mini-PCIe connector.
-
-* If you use both Linux and Windows on the computer with this card, uninstall
-  the Turbo Memory driver in Windows before using this driver. Data on the card
-  will be corrupted otherwise since both drivers do not use it in the same way.
 
 * This driver is developed using the 2GB version of the board. If the 1 and 4GB
   versions use the same flash layout they should also work, otherwise some
@@ -42,9 +71,17 @@ Example session:
 
 # modprobe mtd
 # insmod turbomem.ko
-# cat /proc/mtd
-dev:    size   erasesize  name
-mtd0: 7ffc0000 00040000 "TurboMemory@0000:04:00.0"
+# mtdinfo /dev/mtd0
+mtd0
+Name:                           TurboMemory@0000:04:00.0
+Type:                           nand
+Eraseblock size:                262144 bytes, 256.0 KiB
+Amount of eraseblocks:          8187 (2146172928 bytes, 2.0 GiB)
+Minimum input/output unit size: 4096 bytes
+Sub-page size:                  4096 bytes
+Character device major/minor:   90:0
+Bad blocks are allowed:         true
+Device is writable:             true
 # flash_erase  /dev/mtd0 0 10
 Erasing 256 Kibyte @ 240000 -- 100 % complete
 # nanddump /dev/mtd0 -l 8192 |hexdump -C
@@ -116,36 +153,38 @@ turbomem 0000:04:00.0: Erase complete: 17 of 8191 blocks bad.
 
 ================================================================================
 
-Speedtest results (with hardcoded bad block handling):
+Speedtest results:
 
 mtd_speedtest: MTD device: 0
-mtd_speedtest: MTD device size 2147221504, eraseblock size 262144, page size 4096, count of eraseblocks 8191, pages per eraseblock 64, OOB size 0
+mtd_speedtest: MTD device size 2146172928, eraseblock size 262144,
+ page size 4096, count of eraseblocks 8187, pages per eraseblock 64, OOB size 0
 mtd_test: scanning for bad eraseblocks
-mtd_test: scanned 8191 eraseblocks, 17 are bad
+mtd_test: scanned 8187 eraseblocks, 17 are bad
 mtd_speedtest: testing eraseblock write speed
-mtd_speedtest: eraseblock write speed is 9699 KiB/s
+mtd_speedtest: eraseblock write speed is 11881 KiB/s
 mtd_speedtest: testing eraseblock read speed
-mtd_speedtest: eraseblock read speed is 27758 KiB/s
+mtd_speedtest: eraseblock read speed is 31137 KiB/s
 mtd_speedtest: testing page write speed
-mtd_speedtest: page write speed is 9755 KiB/s
+mtd_speedtest: page write speed is 11920 KiB/s
 mtd_speedtest: testing page read speed
-mtd_speedtest: page read speed is 27629 KiB/s
+mtd_speedtest: page read speed is 31045 KiB/s
 mtd_speedtest: testing 2 page write speed
-mtd_speedtest: 2 page write speed is 9755 KiB/s
+mtd_speedtest: 2 page write speed is 11929 KiB/s
 mtd_speedtest: testing 2 page read speed
-mtd_speedtest: 2 page read speed is 28122 KiB/s
+mtd_speedtest: 2 page read speed is 31072 KiB/s
 mtd_speedtest: Testing erase speed
-mtd_speedtest: erase speed is 446742 KiB/s
+mtd_speedtest: erase speed is 494683 KiB/s
 mtd_speedtest: Testing 2x multi-block erase speed
-mtd_speedtest: 2x multi-block erase speed is 439148 KiB/s
+mtd_speedtest: 2x multi-block erase speed is 495034 KiB/s
 mtd_speedtest: Testing 4x multi-block erase speed
-mtd_speedtest: 4x multi-block erase speed is 431808 KiB/s
+mtd_speedtest: 4x multi-block erase speed is 494683 KiB/s
 mtd_speedtest: Testing 8x multi-block erase speed
-mtd_speedtest: 8x multi-block erase speed is 433598 KiB/s
+mtd_speedtest: 8x multi-block erase speed is 494566 KiB/s
 mtd_speedtest: Testing 16x multi-block erase speed
-mtd_speedtest: 16x multi-block erase speed is 429945 KiB/s
+mtd_speedtest: 16x multi-block erase speed is 495034 KiB/s
 mtd_speedtest: Testing 32x multi-block erase speed
-mtd_speedtest: 32x multi-block erase speed is 430122 KiB/s
+mtd_speedtest: 32x multi-block erase speed is 494683 KiB/s
 mtd_speedtest: Testing 64x multi-block erase speed
-mtd_speedtest: 64x multi-block erase speed is 429768 KiB/s
+mtd_speedtest: 64x multi-block erase speed is 495386 KiB/s
 mtd_speedtest: finished
+
