@@ -1,5 +1,5 @@
 /*
- * Driver for Intel(R) Turbo Memory flash memory
+ * Driver for Intel(R) Turbo Memory Controller
  *
  * Copyright (c) 2013-2015 Erik Ekman <erik@kryo.se>
  *
@@ -1235,7 +1235,7 @@ static void __exit turbomem_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Intel(R) Turbo Memory Controller NAND flash driver");
+MODULE_DESCRIPTION("Intel(R) Turbo Memory Controller driver");
 MODULE_AUTHOR("Erik Ekman <erik@kryo.se>");
 
 module_init(turbomem_init);
