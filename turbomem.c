@@ -122,6 +122,23 @@ enum iomode {
 	MODE_NOP = 0x35,
 };
 
+enum xfer_status {
+	XFER_QUEUED = 0,
+	XFER_DONE,
+	XFER_FAILED,
+};
+
+struct transferbuf_handle {
+	/* Virtual address of struct transfer_command buffer */
+	void *buf;
+	/* DMA address to the same buffer, for writing to HW */
+	dma_addr_t busaddr;
+	/* Operation status */
+	enum xfer_status status;
+	/* IRQ completion */
+	struct completion completion;
+};
+
 /*
  * This struct is given to the device to initiate a transfer.
  * The bus address of it is written to the 64bit register at offset 0.
@@ -233,24 +250,6 @@ struct turbomem_info {
 	unsigned flash_sectors;
 	unsigned usable_flash_sectors;
 	struct turbomem_bbt *bbt;
-};
-
-enum xfer_status {
-	XFER_QUEUED = 0,
-	XFER_DONE,
-	XFER_FAILED,
-	XFER_TIMEOUT,
-};
-
-struct transferbuf_handle {
-	/* Virtual address of struct transfer_command buffer */
-	void *buf;
-	/* DMA address to the same buffer, for writing to HW */
-	dma_addr_t busaddr;
-	/* Operation status */
-	enum xfer_status status;
-	/* IRQ completion */
-	struct completion completion;
 };
 
 static struct dentry *debugfs_root = NULL;
