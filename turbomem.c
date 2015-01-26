@@ -84,6 +84,7 @@ MODULE_PARM_DESC(debug, "Debug mode (1=log all I/O)");
 /* Unit for reads/writes */
 #define NAND_SECTORS_PER_PAGE 8
 #define NAND_PAGE_SIZE ((NAND_SECTORS_PER_PAGE)*(NAND_SECTOR_SIZE))
+#define NAND_PAGE_OFFSET(x) ((x) % (NAND_PAGE_SIZE))
 /* Unit for erasing */
 #define NAND_SECTORS_PER_BLOCK 512
 #define NAND_BLOCK_SIZE ((NAND_SECTORS_PER_BLOCK)*(NAND_SECTOR_SIZE))
@@ -549,7 +550,7 @@ static ssize_t turbomem_debugfs_read_orom(struct file *file,
 	}
 
 	offset_backup = *ppos & 0xFFFF000;
-	*ppos &= 0xFFF; /* Read within 4k-buf */
+	*ppos = NAND_PAGE_OFFSET(*ppos);
 	retval = simple_read_from_buffer(userbuf, count, ppos,
 		buf4k, NAND_PAGE_SIZE);
 	*ppos += offset_backup;
@@ -712,24 +713,25 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	u_char *readbuf;
 	size_t bytes_read = 0;
 	int result = 0;
-	/* Round to even 4kB block */
-	unsigned offset = from & 0xfff;
+	/* Round to even page */
+	unsigned offset = NAND_PAGE_OFFSET(from);
 	sector_t lba = NUM_SECTORS(from) & 0xFFFFFFF8;
 	DBG("Read len %lu from addr %08llX, sector %08lX\n", len, from, lba);
 	mutex_lock(&turbomem->lock);
+	if (offset || NAND_PAGE_OFFSET(len)) {
+		/* Uneven offset or length, need a bounce buffer */
+		tempbuf = kmalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
+		if (!tempbuf) {
+			result = -ENOMEM;
+			goto out;
+		}
+	}
 	while (bytes_read < len) {
 		size_t to_read = len - bytes_read;
-		/* Do small reads into temp buffer */
-		if (to_read < NAND_PAGE_SIZE) {
-			tempbuf = kmalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
-			if (!tempbuf) {
-				result = -ENOMEM;
-				goto out;
-			}
+		if (tempbuf)
 			readbuf = tempbuf;
-		} else {
+		else
 			readbuf = buf;
-		}
 		DBG("Subread %lu bytes to lba %08lX offset %u to %p\n",
 			to_read, lba, offset, readbuf);
 		/* Read from flash */
@@ -746,18 +748,18 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		/* Return read data, handle partial request */
 		if (tempbuf) {
 			memcpy(buf, readbuf + offset, to_read);
-			kfree(tempbuf);
-			tempbuf = NULL;
-		} else if (offset) {
-			memmove(buf, readbuf + offset, to_read);
+			DBG("Copied %lu bytes to buf %p\n", to_read, buf);
+		} else {
+			DBG("Read %lu bytes to buf %p\n", to_read, buf);
 		}
-		DBG("Read %lu bytes to buf %p\n", to_read, buf);
 		buf += to_read;
 		lba += NUM_SECTORS(NAND_PAGE_SIZE);
 		bytes_read += to_read;
 		offset = 0; /* Only first read can be misaligned */
 	}
 out:
+	if (tempbuf)
+		kfree(tempbuf);
 	mutex_unlock(&turbomem->lock);
 	*retlen = bytes_read;
 	return result;
