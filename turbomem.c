@@ -68,6 +68,7 @@ The controller chip only allows 4kB pages and manages the OOB data.
 #include <linux/interrupt.h>
 #include <linux/debugfs.h>
 #include <linux/mtd/mtd.h>
+#include <linux/pm.h>
 
 static int debug;
 module_param(debug, int, 0);
@@ -1171,6 +1172,27 @@ static void turbomem_debugfs_cleanup(void)
 	debugfs_root = NULL;
 }
 
+#ifdef CONFIG_PM
+static void turbomem_pm_complete(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct turbomem_info *turbomem = pci_get_drvdata(pdev);
+	int result;
+
+	result = turbomem_hw_init(turbomem);
+
+	if (result)
+		dev_warn(dev, "Failed to reset board on resume, result = %d\n", result);
+}
+
+static const struct dev_pm_ops turbomem_pm_ops = {
+	.complete = turbomem_pm_complete,
+};
+#define TURBOMEM_PM_OPS (&turbomem_pm_ops)
+#else
+#define TURBOMEM_PM_OPS (NULL)
+#endif
+
 #define PCI_DEVICE_ID_INTEL_TURBOMEMORY (0x444e)
 
 static const struct pci_device_id turbomem_ids[] = {
@@ -1184,6 +1206,7 @@ static struct pci_driver pci_driver = {
 	.id_table = turbomem_ids,
 	.probe = turbomem_probe,
 	.remove = turbomem_remove,
+	.driver.pm = TURBOMEM_PM_OPS,
 };
 
 static int __init turbomem_init(void)

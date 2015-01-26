@@ -16,7 +16,6 @@ Current status:
 Erasing, writing and reading works, bad block handling is done.
 Driver passes mtd_pagetest and ubi tests.
 Device is mountable with ubifs, but does not work properly.
-Suspend/resume is not supported.
 
 How to format and mount:
 ------------------------
