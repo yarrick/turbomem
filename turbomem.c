@@ -675,8 +675,9 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 			result = 0;
 		} else {
 			dev_warn(turbomem->dev,
-				"IO error: result %08X (lba %08lX op %d)\n",
-				le32_to_cpu(cmd->result), lba, mode);
+				"IO error: result %08X (lba %08llX op %d)\n",
+				le32_to_cpu(cmd->result),
+				(unsigned long long) lba, mode);
 		}
 	}
 out:
@@ -725,7 +726,8 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	unsigned offset = NAND_PAGE_OFFSET(from);
 	sector_t lba = NUM_SECTORS(from) & 0xFFFFFFF8;
 
-	DBG("Read len %lu from addr %08llX, sector %08lX\n", len, from, lba);
+	DBG("Read len %zu from addr %08llX, sector %08llX\n", len, from,
+		(unsigned long long) lba);
 	mutex_lock(&turbomem->lock);
 	if (offset || NAND_PAGE_OFFSET(len)) {
 		/* Uneven offset or length, need a bounce buffer */
@@ -742,8 +744,8 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 			readbuf = tempbuf;
 		else
 			readbuf = buf;
-		DBG("Subread %lu bytes to lba %08lX offset %u to %p\n",
-			to_read, lba, offset, readbuf);
+		DBG("Subread %zu bytes to lba %08llX offset %u to %p\n",
+			to_read, (unsigned long long) lba, offset, readbuf);
 		/* Read from flash */
 		result = turbomem_mtd_exec(turbomem, MODE_READ,
 				RESERVED_SECTORS + lba,
@@ -757,9 +759,9 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		/* Return read data, handle partial request */
 		if (tempbuf) {
 			memcpy(buf, readbuf + offset, to_read);
-			DBG("Copied %lu bytes to buf %p\n", to_read, buf);
+			DBG("Copied %zu bytes to buf %p\n", to_read, buf);
 		} else {
-			DBG("Read %lu bytes to buf %p\n", to_read, buf);
+			DBG("Read %zu bytes to buf %p\n", to_read, buf);
 		}
 		buf += to_read;
 		lba += NUM_SECTORS(NAND_PAGE_SIZE);
@@ -781,8 +783,8 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	sector_t lba = NUM_SECTORS(to);
 	size_t bytes_written = 0;
 
-	DBG("Write len %lu to addr %08llX, sector %08lX\n",
-		len, to, lba);
+	DBG("Write len %zu to addr %08llX, sector %08llX\n",
+		len, to, (unsigned long long) lba);
 	mutex_lock(&turbomem->lock);
 	/* Write max one page at a time */
 	while (bytes_written < len) {
@@ -790,7 +792,8 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 
 		if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
 			sectors = NUM_SECTORS(NAND_PAGE_SIZE);
-		DBG("Subwrite %d sectors to lba %08lX\n", sectors, lba);
+		DBG("Subwrite %d sectors to lba %08llX\n", sectors,
+			(unsigned long long) lba);
 		result = turbomem_mtd_exec(turbomem, MODE_WRITE,
 			RESERVED_SECTORS + lba, sectors, (u_char *) buf);
 		if (result)
