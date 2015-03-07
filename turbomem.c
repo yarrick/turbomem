@@ -254,7 +254,7 @@ struct turbomem_info {
 	struct turbomem_bbt *bbt;
 };
 
-static struct dentry *debugfs_root = NULL;
+static struct dentry *debugfs_root;
 
 static u32 readle32(struct turbomem_info *turbomem, u32 offset)
 {
