@@ -713,7 +713,7 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 }
 
 static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
-                      size_t *retlen, u_char *buf)
+				size_t *retlen, u_char *buf)
 {
 	struct turbomem_info *turbomem = mtd->priv;
 	u_char *tempbuf = NULL;
@@ -775,7 +775,7 @@ out:
 }
 
 static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
-                      size_t *retlen, const u_char *buf)
+				size_t *retlen, const u_char *buf)
 {
 	struct turbomem_info *turbomem = mtd->priv;
 	int result;
