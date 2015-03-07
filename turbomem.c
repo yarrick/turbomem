@@ -881,7 +881,7 @@ static int turbomem_count_bad(struct turbomem_bbt *bbt)
 	while (i < bbt->eraseblocks) {
 		int pos;
 
-		for (pos = 0; pos < 8; pos ++) {
+		for (pos = 0; pos < 8; pos++) {
 			if (*table & (1 << pos))
 				count++;
 			i++;
