@@ -483,7 +483,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	if (initregs) {
 		for (i = 0; i < 4; i++) {
 			reg = 0;
-			if (i == 3) reg = 0x1F;
+			if (i == 3)
+				reg = 0x1F;
 			writele32(turbomem, i*8, reg);
 		}
 		initregs = 0;
@@ -495,10 +496,12 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 
 			writele32(turbomem, COMMAND_REGISTER, COMMAND_RESET);
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
-				if (i) msleep(100);
+				if (i)
+					msleep(100);
 				writele32(turbomem, 8, reg8);
 				reg = readle32(turbomem, STATUS_REGISTER);
-				if ((reg & STATUS_BOOTING) == 0) break;
+				if ((reg & STATUS_BOOTING) == 0)
+					break;
 			}
 			if (i >= HW_RESET_ATTEMPTS)
 				return -EIO;
@@ -509,9 +512,11 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	reg = (reg & 0xFFFFFFFB) | 1;
 	writele32(turbomem, 8, reg);
 	for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
-		if (i) msleep(100);
+		if (i)
+			msleep(100);
 		reg = readle32(turbomem, STATUS_REGISTER);
-		if ((reg & STATUS_BOOTING) == 0) break;
+		if ((reg & STATUS_BOOTING) == 0)
+			break;
 	}
 	if (i >= HW_RESET_ATTEMPTS)
 		return -EIO;
