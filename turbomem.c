@@ -987,8 +987,8 @@ static int turbomem_init_bbt(struct turbomem_info *turbomem)
 
 	ret = turbomem_read_bbt(turbomem);
 	if (ret == -ENODATA) {
-		dev_warn(turbomem->dev, "No bad block data found, will format"
-					" and create new!\n");
+		dev_warn(turbomem->dev,
+			"No bad block data found, will format and create new!\n");
 		ret = turbomem_format_build_bbt(turbomem);
 		if (ret)
 			return ret;
