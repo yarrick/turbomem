@@ -600,8 +600,9 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 	} while (lba < turbomem->flash_sectors);
 	mutex_unlock(&turbomem->lock);
 
-	dev_info(turbomem->dev, "Erase complete: %d of %d blocks bad.\n",
-		errors, turbomem->usable_flash_sectors / NAND_SECTORS_PER_BLOCK);
+	dev_info(turbomem->dev,
+		"Erase complete: %d of %d blocks bad.\n", errors,
+		turbomem->usable_flash_sectors / NAND_SECTORS_PER_BLOCK);
 	return size;
 }
 
@@ -1204,7 +1205,8 @@ static void turbomem_pm_complete(struct device *dev)
 	result = turbomem_hw_init(turbomem);
 
 	if (result)
-		dev_warn(dev, "Failed to reset board on resume, result = %d\n", result);
+		dev_warn(dev, "Failed to reset board on resume, result = %d\n",
+			result);
 }
 
 static const struct dev_pm_ops turbomem_pm_ops = {
