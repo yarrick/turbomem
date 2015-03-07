@@ -355,6 +355,7 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 	struct transferbuf_handle *transfer)
 {
 	dma_addr_t busaddr = transfer->busaddr;
+
 	turbomem->curr_transfer = transfer;
 	writele32(turbomem, TRANSFER_CMD_ADDR_UPPER_REGISTER,
 					(busaddr >> 32) & 0xFFFFFFFF);
@@ -365,8 +366,8 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 static void turbomem_setup_idle_transfer(struct turbomem_info *turbomem)
 {
 	struct transfer_command *idle_cmd = turbomem->idle_transfer->buf;
-	memset(idle_cmd, 0, sizeof(struct transfer_command));
 
+	memset(idle_cmd, 0, sizeof(struct transfer_command));
 	idle_cmd->transfer_flags = cpu_to_le32(0x7FFFFFFE);
 	idle_cmd->mode = MODE_NOP;
 	idle_cmd->last_transfer = 1;
@@ -407,6 +408,7 @@ static sector_t turbomem_translate_lba(sector_t lba)
 	sector_t lower = 2 * (lba & 0x1FF);
 	/* 512 usable sectors appear at even intervals */
 	sector_t upper = 0x1000 * (lba >> 9);
+
 	return upper | lower;
 }
 
@@ -415,6 +417,7 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	dma_addr_t busaddr, enum iomode mode)
 {
 	struct transfer_command *cmd = xfer->buf;
+
 	lba = turbomem_translate_lba(lba);
 
 	/* We must have the lock here */
@@ -472,6 +475,7 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	u32 initregs;
 	u32 reg;
 	unsigned i;
+
 	initregs = 0;
 	for (i = 0; i < 4; i++) {
 		initregs |= readle32(turbomem, i*8);
@@ -488,6 +492,7 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 		}
 		if (initregs) {
 			u32 reg8 = 1 | readle32(turbomem, 8);
+
 			writele32(turbomem, COMMAND_REGISTER, COMMAND_RESET);
 			for (i = 0; i < HW_RESET_ATTEMPTS; i++) {
 				if (i) msleep(100);
@@ -660,6 +665,7 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 
 	if (result) {
 		struct transfer_command *cmd = xfer->buf;
+
 		if (mode == MODE_READ && le32_to_cpu(cmd->result) ==
 						RESULT_READ_ERASED_SECTOR) {
 			/* Make up erased sector */
@@ -716,6 +722,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	/* Round to even page */
 	unsigned offset = NAND_PAGE_OFFSET(from);
 	sector_t lba = NUM_SECTORS(from) & 0xFFFFFFF8;
+
 	DBG("Read len %lu from addr %08llX, sector %08lX\n", len, from, lba);
 	mutex_lock(&turbomem->lock);
 	if (offset || NAND_PAGE_OFFSET(len)) {
@@ -728,6 +735,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 	}
 	while (bytes_read < len) {
 		size_t to_read = len - bytes_read;
+
 		if (tempbuf)
 			readbuf = tempbuf;
 		else
@@ -772,12 +780,14 @@ static int turbomem_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 	int result;
 	sector_t lba = NUM_SECTORS(to);
 	size_t bytes_written = 0;
+
 	DBG("Write len %lu to addr %08llX, sector %08lX\n",
 		len, to, lba);
 	mutex_lock(&turbomem->lock);
 	/* Write max one page at a time */
 	while (bytes_written < len) {
 		int sectors = NUM_SECTORS(len - bytes_written);
+
 		if (sectors > NUM_SECTORS(NAND_PAGE_SIZE))
 			sectors = NUM_SECTORS(NAND_PAGE_SIZE);
 		DBG("Subwrite %d sectors to lba %08lX\n", sectors, lba);
@@ -804,6 +814,7 @@ static int turbomem_read_bbt(struct turbomem_info *turbomem)
 	int result;
 	u8 *buf = kzalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
 	struct turbomem_bbt *bbt = NULL;
+
 	if (!buf)
 		return -ENOMEM;
 
@@ -838,6 +849,7 @@ static int turbomem_read_bbt(struct turbomem_info *turbomem)
 static unsigned turbomem_get_eraseblock(loff_t addr)
 {
 	unsigned sector = RESERVED_SECTORS + (addr / NAND_SECTOR_SIZE);
+
 	return sector / (NAND_SECTORS_PER_BLOCK);
 }
 
@@ -868,6 +880,7 @@ static int turbomem_count_bad(struct turbomem_bbt *bbt)
 	/* Count number of bad blocks in table */
 	while (i < bbt->eraseblocks) {
 		int pos;
+
 		for (pos = 0; pos < 8; pos ++) {
 			if (*table & (1 << pos))
 				count++;
@@ -882,6 +895,7 @@ static int turbomem_format_build_bbt(struct turbomem_info *turbomem)
 {
 	struct turbomem_bbt *bbt = NULL;
 	unsigned i;
+
 	bbt = kzalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
 	if (!bbt)
 		return -ENOMEM;
@@ -894,6 +908,7 @@ static int turbomem_format_build_bbt(struct turbomem_info *turbomem)
 						i += NAND_SECTORS_PER_BLOCK) {
 		int result;
 		struct transferbuf_handle *xfer;
+
 		xfer = turbomem_transferbuf_alloc(turbomem);
 		if (!xfer) {
 			mutex_unlock(&turbomem->lock);
@@ -906,6 +921,7 @@ static int turbomem_format_build_bbt(struct turbomem_info *turbomem)
 			/* Bad block */
 			loff_t addr = i * (NAND_SECTOR_SIZE);
 			unsigned eb = turbomem_get_eraseblock(addr);
+
 			turbomem_markbad(bbt, eb);
 		}
 		turbomem_transferbuf_free(turbomem, xfer);
@@ -920,6 +936,7 @@ static int turbomem_save_bbt(struct turbomem_info *turbomem)
 	struct turbomem_bbt *bbt_out;
 	unsigned i;
 	int result;
+
 	bbt_out = kzalloc(NAND_PAGE_SIZE, GFP_KERNEL | GFP_DMA);
 	if (!bbt_out)
 		return -ENOMEM;
@@ -968,6 +985,7 @@ static int turbomem_save_bbt(struct turbomem_info *turbomem)
 static int turbomem_init_bbt(struct turbomem_info *turbomem)
 {
 	int ret;
+
 	ret = turbomem_read_bbt(turbomem);
 	if (ret == -ENODATA) {
 		dev_warn(turbomem->dev, "No bad block data found, will format"
@@ -993,12 +1011,14 @@ static int turbomem_init_bbt(struct turbomem_info *turbomem)
 static int turbomem_mtd_block_isbad(struct mtd_info *mtd, loff_t ofs)
 {
 	struct turbomem_info *turbomem = mtd->priv;
+
 	return turbomem_isbad(turbomem->bbt, turbomem_get_eraseblock(ofs));
 }
 
 static int turbomem_mtd_block_markbad(struct mtd_info *mtd, loff_t ofs)
 {
 	struct turbomem_info *turbomem = mtd->priv;
+
 	turbomem_markbad(turbomem->bbt, turbomem_get_eraseblock(ofs));
 	turbomem->bbt->version++;
 	return turbomem_save_bbt(turbomem);
@@ -1007,6 +1027,7 @@ static int turbomem_mtd_block_markbad(struct mtd_info *mtd, loff_t ofs)
 static int turbomem_setup_mtd(struct turbomem_info *turbomem)
 {
 	struct mtd_info *mtd = &turbomem->mtd;
+
 	mtd->type = MTD_NANDFLASH;
 	mtd->flags = MTD_CAP_NANDFLASH;
 	mtd->size = turbomem->usable_flash_sectors * NAND_SECTOR_SIZE;
