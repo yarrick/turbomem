@@ -357,7 +357,7 @@ static void turbomem_write_transfer_to_hw(struct turbomem_info *turbomem,
 
 	turbomem->curr_transfer = transfer;
 	writele32(turbomem, TRANSFER_CMD_ADDR_UPPER_REGISTER,
-					(busaddr >> 32) & 0xFFFFFFFF);
+					(busaddr >> 16 >> 16) & 0xFFFFFFFF);
 	writele32(turbomem, TRANSFER_CMD_ADDR_LOWER_REGISTER,
 					busaddr & 0xFFFFFFFF);
 }
