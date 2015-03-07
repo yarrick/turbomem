@@ -748,8 +748,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 				RESERVED_SECTORS + lba,
 				NUM_SECTORS(NAND_PAGE_SIZE), readbuf);
 		if (result) {
-			if (tempbuf)
-				kfree(tempbuf);
+			kfree(tempbuf);
 			goto out;
 		}
 		if (to_read > NAND_PAGE_SIZE - offset)
@@ -767,8 +766,7 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 		offset = 0; /* Only first read can be misaligned */
 	}
 out:
-	if (tempbuf)
-		kfree(tempbuf);
+	kfree(tempbuf);
 	mutex_unlock(&turbomem->lock);
 	*retlen = bytes_read;
 	return result;
