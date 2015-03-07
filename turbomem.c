@@ -210,7 +210,7 @@ struct transfer_command {
 	u8 cmd_one;
 	u8 reserved8;
 	u16 reserved9;
-} __attribute__((packed));
+} __packed;
 
 /* Value from transfer_command->result */
 enum command_result {
