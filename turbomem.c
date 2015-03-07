@@ -334,9 +334,8 @@ static irqreturn_t turbomem_isr(int irq, void *dev)
 	reg = readle32(turbomem, STATUS_REGISTER);
 	writele32(turbomem, STATUS_REGISTER, reg & STATUS_INTERRUPT_MASK);
 
-	if (turbomem->curr_transfer) {
+	if (turbomem->curr_transfer)
 		complete_all(&turbomem->curr_transfer->completion);
-	}
 
 	return IRQ_HANDLED;
 }
@@ -477,9 +476,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 	unsigned i;
 
 	initregs = 0;
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 4; i++)
 		initregs |= readle32(turbomem, i*8);
-	}
 	if (initregs) {
 		for (i = 0; i < 4; i++) {
 			reg = 0;
@@ -488,9 +486,8 @@ static int turbomem_hw_init(struct turbomem_info *turbomem)
 			writele32(turbomem, i*8, reg);
 		}
 		initregs = 0;
-		for (i = 0; i < 4; i++) {
+		for (i = 0; i < 4; i++)
 			initregs |= readle32(turbomem, i*8);
-		}
 		if (initregs) {
 			u32 reg8 = 1 | readle32(turbomem, 8);
 
@@ -595,9 +592,8 @@ static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
 			break;
 
 		ret = turbomem_do_io(turbomem, lba, 0, xfer, 0, MODE_ERASE);
-		if (ret) {
+		if (ret)
 			errors++;
-		}
 
 		turbomem_transferbuf_free(turbomem, xfer);
 		lba += NAND_SECTORS_PER_BLOCK;
