@@ -113,7 +113,7 @@ MODULE_PARM_DESC(debug, "Debug mode (1=log all I/O)");
 /*
  * There are also other modes:
  * Some kind of read:  2 3 (mode 3 maybe better at reading sectors
- * 	written to multiple times?)
+ *     written to multiple times?)
  * Some kind of write: 5 6
  * Unknown: 0x31 +more?
  */
