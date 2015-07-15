@@ -571,45 +571,6 @@ static const struct file_operations debugfs_orom_fops = {
 	.read	= turbomem_debugfs_read_orom,
 };
 
-static ssize_t turbomem_debugfs_wipe_flash(struct file *file,
-	const char __user *user_buf, size_t size, loff_t *ppos)
-{
-	sector_t lba;
-	int errors;
-	struct turbomem_info *turbomem = file->f_inode->i_private;
-
-	dev_info(turbomem->dev, "Wiping flash!");
-
-	lba = RESERVED_SECTORS;
-	errors = 0;
-	mutex_lock(&turbomem->lock);
-	do {
-		struct transferbuf_handle *xfer;
-		int ret;
-
-		xfer = turbomem_transferbuf_alloc(turbomem);
-		if (!xfer)
-			break;
-
-		ret = turbomem_do_io(turbomem, lba, 0, xfer, 0, MODE_ERASE);
-		if (ret)
-			errors++;
-
-		turbomem_transferbuf_free(turbomem, xfer);
-		lba += NAND_SECTORS_PER_BLOCK;
-	} while (lba < turbomem->flash_sectors);
-	mutex_unlock(&turbomem->lock);
-
-	dev_info(turbomem->dev,
-		"Erase complete: %d of %d blocks bad.\n", errors,
-		turbomem->usable_flash_sectors / NAND_SECTORS_PER_BLOCK);
-	return size;
-}
-
-static const struct file_operations debugfs_wipe_flash_fops = {
-	.write	= turbomem_debugfs_wipe_flash,
-};
-
 static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
 {
 	if (IS_ERR_OR_NULL(debugfs_root))
@@ -621,8 +582,6 @@ static void turbomem_debugfs_dev_add(struct turbomem_info *turbomem)
 		return;
 	debugfs_create_file("orom", 0400, turbomem->debugfs_dir, turbomem,
 		&debugfs_orom_fops);
-	debugfs_create_file("wipe_flash", 0200, turbomem->debugfs_dir,
-		turbomem, &debugfs_wipe_flash_fops);
 }
 
 static void turbomem_debugfs_dev_remove(struct turbomem_info *turbomem)

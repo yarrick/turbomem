@@ -140,16 +140,6 @@ Debugfs interface:
 00000090  46 49 4c 54 2e 12 01 01  01 00 0a 00 01 00 ea 03  |FILT............|
 .... and so on.
 
-
-* /turbomem/<pci-addr>/wipe_flash (write)
-  Write anything here to erase the flash memory. Watch out.
-  Example:
-
-# echo 1 > /sys/kernel/debug/turbomem/0000:04:00.0/wipe_flash
-turbomem 0000:04:00.0: Wiping flash!
-turbomem 0000:04:00.0: Erase complete: 17 of 8191 blocks bad.
-
-
 ================================================================================
 
 Speedtest results:
