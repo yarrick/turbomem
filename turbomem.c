@@ -710,7 +710,6 @@ static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 				RESERVED_SECTORS + lba,
 				NUM_SECTORS(NAND_PAGE_SIZE), readbuf);
 		if (result) {
-			kfree(tempbuf);
 			goto out;
 		}
 		if (to_read > NAND_PAGE_SIZE - offset)
