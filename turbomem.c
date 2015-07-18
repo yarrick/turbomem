@@ -415,7 +415,7 @@ static int turbomem_do_io(struct turbomem_info *turbomem, sector_t lba,
 	int sectors, struct transferbuf_handle *xfer,
 	dma_addr_t busaddr, enum iomode mode)
 {
-	struct transfer_command *cmd = xfer->buf;
+	struct transfer_command *cmd;
 
 	lba = turbomem_translate_lba(lba);
 
