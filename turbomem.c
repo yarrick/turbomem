@@ -617,6 +617,9 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 			result = -ENOMEM;
 			goto out;
 		}
+	} else if (mode != MODE_ERASE) {
+		/* Buffer required if not erasing */
+		return -EINVAL;
 	}
 	result = turbomem_do_io(turbomem, lba, sectors, xfer, busaddr, mode);
 	if (busaddr)
