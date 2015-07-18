@@ -286,7 +286,6 @@ static void turbomem_calc_sectors(struct turbomem_info *turbomem)
 	unsigned reg;
 	unsigned limit8, limit14;
 	unsigned d;
-	unsigned c = 1;
 	unsigned i = 0;
 
 	/* Get device characteristics */
@@ -295,7 +294,6 @@ static void turbomem_calc_sectors(struct turbomem_info *turbomem)
 
 	d = (reg >> 0xC) & 0xF;
 	do {
-		c = c * 2;
 		i++;
 	} while (i < d);
 	limit8 = i << 10;
