@@ -69,6 +69,7 @@ The controller chip only allows 4kB pages and manages the OOB data.
 #include <linux/debugfs.h>
 #include <linux/mtd/mtd.h>
 #include <linux/pm.h>
+#include <linux/version.h>
 
 static int debug;
 module_param(debug, int, 0);
@@ -660,7 +661,11 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 		result = turbomem_mtd_exec(turbomem, MODE_ERASE,
 				RESERVED_SECTORS + pos, 0, NULL);
 		if (result) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
 			instr->state = MTD_ERASE_FAILED;
+#else
+			result = -EIO;
+#endif
 			instr->fail_addr = pos * NAND_SECTOR_SIZE;
 			mutex_unlock(&turbomem->lock);
 			return result;
@@ -669,9 +674,13 @@ static int turbomem_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 	}
 	mutex_unlock(&turbomem->lock);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
 	instr->state = MTD_ERASE_DONE;
 	mtd_erase_callback(instr);
 	return 0;
+#else
+	return result;
+#endif
 }
 
 static int turbomem_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
