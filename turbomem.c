@@ -1100,6 +1100,13 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	dev_info(&dev->dev, "Device characteristics: %05X, flash size: %d MB\n",
 		turbomem->characteristics, turbomem->flash_sectors >> 11);
 
+	if (turbomem->flash_sectors >> 11 <= 1024) {
+		dev_warn(turbomem->dev, "1GB board not supported yet\n"
+					"Skipping further initialization to "
+					"avoid bricking the card.\n");
+		return 0;
+	}
+
 	ret = turbomem_init_bbt(turbomem);
 	if (ret) {
 		dev_err(&dev->dev, "Unable to initialize bad blocks table\n");
