@@ -614,8 +614,9 @@ static int turbomem_mtd_exec(struct turbomem_info *turbomem, enum iomode mode,
 			dir = DMA_FROM_DEVICE;
 
 		busaddr = dma_map_single(turbomem->dev, buf, length, dir);
-		if (!busaddr) {
-			result = -ENOMEM;
+		if (dma_mapping_error(turbomem->dev, busaddr)) {
+			dev_err(turbomem->dev, "Failed to map DMA buffer\n");
+			result = -EIO;
 			goto out;
 		}
 	} else if (mode != MODE_ERASE) {
