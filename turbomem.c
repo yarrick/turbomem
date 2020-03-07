@@ -51,11 +51,11 @@ and so on.
 Erase can be done at address 0x0, 0x1000, 0x2000, 0x3000 and so on.
 
 The first 256kB contain serial number, option ROM and other data and is kept
-as reserved. There is probably no problem in using it as normal flash though.
+as reserved.
 
-
-The flash chips mounted on the 2GB board are 2xIntel SD74 55nm NOP4 SLC NAND,
-part JS29F08G08CANC1 which has 2kB page size and 64byte OOB.
+The flash chips mounted on the board are Intel SD74 SLC NAND, which has
+2kB page size, 64byte OOB and rated at 26 MB/s read and 7.5 MB/s write speed.
+The 2GB board has 2x JS29F08G08CANC1 while the 1GB board has 2x JS29F04G08AANB1.
 The controller chip only allows 4kB pages and manages the OOB data.
 
 */
