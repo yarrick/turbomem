@@ -56,9 +56,9 @@ Notes:
   and work. Since this driver does no disk filtering hopefully the Turbo Memory
   will work in any board with a mini-PCIe connector.
 
-* This driver is developed using the 2GB version of the board. If the 1 and 4GB
-  versions use the same flash layout they should also work, otherwise some
-  adjustment will be needed. Get in touch if you run into problems.
+* This driver is developed using the 2GB version of the board.
+  It does not work on 1GB boards, and can brick them when erasing to add bad
+  block table. It has not been tested on 4GB boards.
 
 
 Enjoy,
