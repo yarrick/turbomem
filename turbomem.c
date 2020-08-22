@@ -243,7 +243,7 @@ struct turbomem_info {
 	struct dentry *debugfs_dir;
 	struct mtd_info mtd;
 	char name[NAME_SIZE];
-	void __iomem *mem;
+	void __iomem *bar0;
 	struct dma_pool *dmapool_cmd;
 	struct mutex lock;
 	struct transferbuf_handle *curr_transfer;
@@ -259,12 +259,12 @@ static struct dentry *debugfs_root;
 
 static u32 readle32(struct turbomem_info *turbomem, u32 offset)
 {
-	return le32_to_cpu(ioread32(turbomem->mem + offset));
+	return le32_to_cpu(ioread32(turbomem->bar0 + offset));
 }
 
 static void writele32(struct turbomem_info *turbomem, u32 offset, u32 value)
 {
-	iowrite32(cpu_to_le32(value), turbomem->mem + offset);
+	iowrite32(cpu_to_le32(value), turbomem->bar0 + offset);
 }
 
 static void turbomem_enable_interrupts(struct turbomem_info *turbomem,
@@ -1049,8 +1049,8 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_enabled;
 	}
 
-	turbomem->mem = pci_iomap(dev, 0, pci_resource_len(dev, 0));
-	if (!turbomem->mem) {
+	turbomem->bar0 = pci_iomap(dev, 0, pci_resource_len(dev, 0));
+	if (!turbomem->bar0) {
 		dev_err(&dev->dev, "Unable to remap BAR0\n");
 		goto fail_have_regions;
 	}
@@ -1134,7 +1134,7 @@ fail_have_dmapool:
 fail_have_irq:
 	free_irq(dev->irq, turbomem);
 fail_have_iomap:
-	pci_iounmap(dev, turbomem->mem);
+	pci_iounmap(dev, turbomem->bar0);
 fail_have_regions:
 	pci_release_regions(dev);
 fail_enabled:
@@ -1155,7 +1155,7 @@ static void turbomem_remove(struct pci_dev *dev)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
-	iounmap(turbomem->mem);
+	iounmap(turbomem->bar0);
 	pci_release_regions(dev);
 	pci_disable_device(dev);
 	pci_set_drvdata(dev, NULL);
