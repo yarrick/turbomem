@@ -1049,10 +1049,9 @@ static int turbomem_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_enabled;
 	}
 
-	turbomem->mem = ioremap_nocache(pci_resource_start(dev, 0),
-				pci_resource_len(dev, 0));
+	turbomem->mem = pci_iomap(dev, 0, pci_resource_len(dev, 0));
 	if (!turbomem->mem) {
-		dev_err(&dev->dev, "Unable to remap memory area\n");
+		dev_err(&dev->dev, "Unable to remap BAR0\n");
 		goto fail_have_regions;
 	}
 
@@ -1135,7 +1134,7 @@ fail_have_dmapool:
 fail_have_irq:
 	free_irq(dev->irq, turbomem);
 fail_have_iomap:
-	iounmap(turbomem->mem);
+	pci_iounmap(dev, turbomem->mem);
 fail_have_regions:
 	pci_release_regions(dev);
 fail_enabled:
