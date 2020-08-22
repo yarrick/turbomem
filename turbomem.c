@@ -75,7 +75,7 @@ static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug mode (1=log all I/O)");
 
-#define DBG(fmt, args...) if (debug) printk(KERN_DEBUG "turbomem: " fmt, ##args)
+#define DBG(fmt, args...) do { if (debug) printk(KERN_DEBUG "turbomem: " fmt, ##args); } while (0)
 
 #define DRIVER_NAME "turbomem"
 #define NAME_SIZE 32
