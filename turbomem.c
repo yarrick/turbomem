@@ -1155,7 +1155,7 @@ static void turbomem_remove(struct pci_dev *dev)
 		turbomem_transferbuf_free(turbomem, turbomem->idle_transfer);
 	dma_pool_destroy(turbomem->dmapool_cmd);
 	free_irq(dev->irq, turbomem);
-	iounmap(turbomem->bar0);
+	pci_iounmap(dev, turbomem->bar0);
 	pci_release_regions(dev);
 	pci_disable_device(dev);
 	pci_set_drvdata(dev, NULL);
