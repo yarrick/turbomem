@@ -53,8 +53,9 @@ Notes:
   Linux drivers use different bad block tables and will erase all flash.
 
 * The supplied Vista driver requires certain SATA controller chips to install
-  and work. Since this driver does no disk filtering hopefully the Turbo Memory
-  will work in any board with a mini-PCIe connector.
+  and work. Tests on one newer machine so far indicates the cards do not run
+  if this chip is missing (card does not show in lspci). Maybe the option ROM
+  disables the card in this case.
 
 * This driver is developed using the 2GB version of the board.
   It does not work on 1GB boards, and can brick them when erasing to add bad
